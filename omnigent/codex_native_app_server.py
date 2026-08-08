@@ -27,6 +27,7 @@ from omnigent import model_catalog
 from omnigent.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
+    from omnigent.inner.datamodel import OSEnvSpec
     from omnigent.onboarding.provider_config import ProviderEntry
 
 from omnigent.codex_native_bridge import write_policy_hook_config
@@ -38,7 +39,9 @@ from omnigent.codex_native_process_registry import (
     register_codex_native_process,
     unregister_codex_native_process,
 )
+from omnigent.env_credentials import runner_env_passthrough_names
 from omnigent.inner import _proc
+from omnigent.inner.agent_env import declared_passthrough
 from omnigent.inner.codex_executor import (
     _clean_codex_env,
     _codex_cli_version,
@@ -1457,6 +1460,7 @@ def build_codex_native_server(
     developer_instructions: str | None = None,
     bypass_sandbox: bool = False,
     trust_project: bool = False,
+    os_env: OSEnvSpec | None = None,
 ) -> CodexNativeAppServer:
     """
     Build a configured native Codex app-server process wrapper.
@@ -1494,6 +1498,9 @@ def build_codex_native_server(
     :param trust_project: Whether to trust ``cwd`` in the private session
         config before app-server startup. Intended for runner-owned headless
         sessions whose hidden TUI cannot answer Codex's project-trust prompt.
+    :param os_env: Optional agent environment contract. Its explicit sandbox
+        passthrough names are combined with the host's explicit runner
+        passthrough names when filtering the app-server environment.
     :returns: Configured app-server process wrapper.
     :raises ImportError: If no Codex CLI is available.
     :raises OSError: If Databricks routing was requested but no
@@ -1506,7 +1513,12 @@ def build_codex_native_server(
             "installed on a PATH the host daemon didn't inherit (e.g. an "
             "nvm-managed bin dir), set OMNIGENT_CODEX_PATH=/path/to/codex."
         )
-    env = _clean_codex_env()
+    env = _clean_codex_env(
+        (
+            *runner_env_passthrough_names(),
+            *declared_passthrough(os_env),
+        )
+    )
     config_overrides: list[str] = []
     if profile is not None:
         # Use the profile's own host so the gateway base URL matches the token

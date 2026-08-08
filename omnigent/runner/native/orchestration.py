@@ -3734,6 +3734,7 @@ async def _auto_create_codex_terminal(
         launch_config.policy_server_url, bearer_token=_policy_auth_token
     )
 
+    agent_os_env = _agent_os_env_from_spec(agent_spec)
     app_server = build_codex_native_server(
         socket_path=socket_path,
         codex_home=codex_home,
@@ -3745,6 +3746,7 @@ async def _auto_create_codex_terminal(
         ap_server_url=launch_config.policy_server_url,
         ap_auth_headers=policy_headers,
         bypass_sandbox=launch_config.bypass_sandbox,
+        os_env=agent_os_env,
         # Codex 0.146 prompts for project trust before creating a thread.
         # This TUI runs detached for the web UI, so trust the runner-selected
         # workspace in the session-private config instead of blocking forever.
@@ -3802,7 +3804,6 @@ async def _auto_create_codex_terminal(
     # egress_rules and env_passthrough are honoured. Without ``sandbox`` here
     # and ``parent_os_env`` below, launch_terminal falls back to
     # _default_sandbox_for_platform (linux_bwrap), overriding the YAML config.
-    agent_os_env = _agent_os_env_from_spec(agent_spec)
     try:
         terminal_view = await resource_registry.launch_auxiliary_terminal(
             session_id=session_id,

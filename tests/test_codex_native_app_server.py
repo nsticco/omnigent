@@ -466,6 +466,43 @@ def test_build_codex_native_server_without_bypass_emits_no_bypass_config(
     assert "sandbox_mode" not in overrides
 
 
+def test_build_codex_native_server_inherits_explicit_runner_passthrough(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit host passthrough reaches Codex app-server child processes."""
+    monkeypatch.setattr(
+        "omnigent.codex_native_app_server._find_codex_cli",
+        lambda: sys.executable,
+    )
+    monkeypatch.setenv(
+        "OMNIGENT_RUNNER_ENV_PASSTHROUGH",
+        "MOONMIND_CONTAINER_JOBS_MCP_URL,MOONMIND_CONTAINER_JOBS_BEARER_TOKEN",
+    )
+    monkeypatch.setenv("MOONMIND_CONTAINER_JOBS_MCP_URL", "http://api/mcp/container")
+    monkeypatch.setenv("MOONMIND_CONTAINER_JOBS_BEARER_TOKEN", "scoped-token")
+    monkeypatch.setenv("UNLISTED_HOST_SECRET", "must-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-remain-denied")
+
+    app_server = build_codex_native_server(
+        socket_path=tmp_path / "codex.sock",
+        codex_home=tmp_path / "codex-home",
+        cwd=tmp_path,
+        model=None,
+        profile=None,
+        bridge_dir=tmp_path / "bridge",
+        ap_server_url=None,
+        ap_auth_headers={},
+    )
+
+    assert app_server.env["MOONMIND_CONTAINER_JOBS_MCP_URL"] == (
+        "http://api/mcp/container"
+    )
+    assert app_server.env["MOONMIND_CONTAINER_JOBS_BEARER_TOKEN"] == "scoped-token"
+    assert "UNLISTED_HOST_SECRET" not in app_server.env
+    assert "OPENAI_API_KEY" not in app_server.env
+
+
 def test_build_codex_native_server_bypass_emits_full_access_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

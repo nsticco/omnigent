@@ -556,6 +556,16 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     monkeypatch.setattr(codex_app_mod, "preload_codex_thread_for_resume", _fake_preload_thread)
     monkeypatch.setattr(runner_app_mod, "_codex_forward_known_thread", _fake_forward_known_thread)
 
+    from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
+
+    agent_os_env = OSEnvSpec(
+        type="caller_process",
+        cwd=".",
+        sandbox=OSEnvSandboxSpec(
+            type="none",
+            env_passthrough=["MOONMIND_CONTAINER_JOBS_MCP_URL"],
+        ),
+    )
     agent_spec = AgentSpec(
         spec_version=1,
         name="codex",
@@ -563,6 +573,7 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
             type="omnigent",
             config={"harness": "codex-native", "model": "gpt-5-default"},
         ),
+        os_env=agent_os_env,
     )
 
     try:
@@ -585,6 +596,7 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     assert app_server.codex_home == expected_codex_home
     assert build_calls[0]["model"] == "gpt-5.4-mini"
     assert build_calls[0]["cwd"] == tmp_path / "workspace"
+    assert build_calls[0]["os_env"] is agent_os_env
     assert build_calls[0]["trust_project"] is True
     assert "developer_instructions" not in build_calls[0]
     assert len(launched_specs) == 1

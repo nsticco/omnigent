@@ -2132,6 +2132,9 @@ def test_build_runner_env_passthrough_extends_forwarded_set() -> None:
     # Named extras forward (whitespace around commas tolerated).
     assert env["MY_GATEWAY_TOKEN"] == "tok-123"
     assert env["MY_GATEWAY_URL"] == "https://llm.internal.example.com"
+    assert env["OMNIGENT_RUNNER_ENV_PASSTHROUGH"] == (
+        "MY_GATEWAY_TOKEN,MY_GATEWAY_URL"
+    )
     # Anything unnamed stays behind the allowlist.
     assert "UNLISTED_SECRET" not in env
 

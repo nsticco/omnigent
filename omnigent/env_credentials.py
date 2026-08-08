@@ -7,8 +7,32 @@ import re
 from collections.abc import Mapping
 
 OMNIGENT_ENV_PREFIX = "OMNIGENT_"
+RUNNER_ENV_PASSTHROUGH_ENV_VAR = "OMNIGENT_RUNNER_ENV_PASSTHROUGH"
 
 _ENV_REF_RE = re.compile(r"(?<!\$)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def runner_env_passthrough_names(
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Return the explicit host-to-runner environment passthrough names.
+
+    The control variable contains names only. Keeping its parsing here gives
+    the host and native harness launchers one canonical interpretation of the
+    operator-controlled allowlist.
+
+    :param environ: Optional environment mapping; defaults to ``os.environ``.
+    :returns: Ordered, de-duplicated non-empty environment variable names.
+    """
+    env = os.environ if environ is None else environ
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw_name in env.get(RUNNER_ENV_PASSTHROUGH_ENV_VAR, "").split(","):
+        name = raw_name.strip()
+        if name and name not in seen:
+            names.append(name)
+            seen.add(name)
+    return tuple(names)
 
 
 def omnigent_prefixed_env_name(name: str) -> str:

@@ -25,7 +25,11 @@ import websockets.asyncio.client
 from websockets.exceptions import InvalidStatus, InvalidURI
 
 from omnigent._platform import IS_POSIX, WINDOWS_ENV_PASSTHROUGH
-from omnigent.env_credentials import env_names_with_omnigent_prefix
+from omnigent.env_credentials import (
+    RUNNER_ENV_PASSTHROUGH_ENV_VAR,
+    env_names_with_omnigent_prefix,
+    runner_env_passthrough_names,
+)
 from omnigent.harness_aliases import canonicalize_harness
 from omnigent.harness_availability import HARNESS_BINARY_MISSING, HarnessAvailability
 from omnigent.host.frames import (
@@ -528,8 +532,6 @@ HARNESS_CREDENTIAL_ENV_VARS: frozenset[str] = frozenset(
 # cover (custom gateway vars, `providers:`-config `env:` refs, exotic
 # SDK knobs). Operator-controlled: the host owner names exactly what
 # their runners need; everything unnamed stays behind the allowlist.
-RUNNER_ENV_PASSTHROUGH_ENV_VAR: str = "OMNIGENT_RUNNER_ENV_PASSTHROUGH"
-
 # HTTP statuses on the WebSocket upgrade that are worth retrying. Everything
 # else in the 4xx range is a permanent client error (auth, authorization,
 # wrong/old server) where reconnecting can never succeed — those fail loud.
@@ -601,11 +603,7 @@ def _build_runner_env(
         any children. ``None`` leaves the legacy auth path unchanged.
     :returns: The runner subprocess environment.
     """
-    extra_names = {
-        name.strip()
-        for name in base_env.get(RUNNER_ENV_PASSTHROUGH_ENV_VAR, "").split(",")
-        if name.strip()
-    }
+    extra_names = set(runner_env_passthrough_names(base_env))
     # Forward env vars that the providers config references via
     # ``api_key_ref: env:VAR`` or ``api_key: $VAR``. Without this, a user
     # who configures a gateway provider with a custom env var (e.g.
@@ -644,6 +642,10 @@ def _build_runner_env(
     # MALLOC_ARENA_MAX. setdefault so an operator override still wins.
     for key, value in _proc.malloc_tuning_env().items():
         env.setdefault(key, value)
+    if extra_names:
+        # Preserve the names-only allowlist so native harness launchers apply
+        # the same operator decision at the runner-to-harness boundary.
+        env[RUNNER_ENV_PASSTHROUGH_ENV_VAR] = ",".join(sorted(extra_names))
     return env
 
 
