@@ -44,6 +44,14 @@ def test_build_prompt_payload_bare_model_id_is_dropped() -> None:
     assert "model" not in build_prompt_payload(NativePrompt(text="hi", model="just-a-name"))
 
 
+def test_build_prompt_payload_carries_the_variant() -> None:
+    body = build_prompt_payload(
+        NativePrompt(text="hi", model="openai/gpt-6.1-sol", metadata={"variant": "medium"})
+    )
+    assert body["variant"] == "medium"
+    assert "variant" not in build_prompt_payload(NativePrompt(text="hi"))
+
+
 def test_build_prompt_payload_image_and_file_attachments() -> None:
     prompt = NativePrompt(
         text="look",

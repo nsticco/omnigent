@@ -292,6 +292,20 @@ class OpenCodeClient:
                 return [m for m in models if isinstance(m, dict)]
         return []
 
+    async def list_providers(self) -> list[_JsonObject]:
+        """
+        List configured providers and their models (``GET /config/providers``).
+
+        :returns: Provider objects; each ``models`` map carries a model's
+            ``variants``.
+        """
+        data = await self._request_json("GET", "/config/providers")
+        if isinstance(data, dict):
+            providers = data.get("providers")
+            if isinstance(providers, list):
+                return [p for p in providers if isinstance(p, dict)]
+        return []
+
     async def prompt(self, session_id: str, payload: _JsonMapping) -> _JsonObject:
         """
         Send a (blocking) prompt (``POST /session/{id}/message``).

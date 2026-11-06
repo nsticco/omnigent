@@ -16,7 +16,7 @@ from omnigent.harnesses.opencode_native.bridge import (
     write_bridge_state,
 )
 from omnigent.harnesses.opencode_native.client import OpenCodeClient
-from omnigent.inner.executor import ExecutorError, TurnComplete
+from omnigent.inner.executor import ExecutorConfig, ExecutorError, TurnComplete
 from omnigent.inner.opencode_native_executor import OpenCodeNativeExecutor
 
 _PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="  # noqa: E501
@@ -28,6 +28,8 @@ class _FakeServer:
 
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
+        # ``GET /config/providers`` body: the configured providers and models.
+        self.providers: list[dict[str, Any]] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         body: dict[str, Any] = {}
@@ -39,6 +41,8 @@ class _FakeServer:
         self.requests.append((request.method, request.url.path, body))
         if request.url.path.endswith("/abort"):
             return httpx.Response(200, json=True)
+        if request.url.path == "/config/providers":
+            return httpx.Response(200, json={"providers": self.providers, "default": {}})
         return httpx.Response(200, json={})
 
 
@@ -89,9 +93,11 @@ def _executor(
     return executor
 
 
-async def _run(executor: OpenCodeNativeExecutor, content: Any) -> list[Any]:
+async def _run(
+    executor: OpenCodeNativeExecutor, content: Any, config: ExecutorConfig | None = None
+) -> list[Any]:
     events: list[Any] = []
-    async for event in executor.run_turn([{"role": "user", "content": content}], [], ""):
+    async for event in executor.run_turn([{"role": "user", "content": content}], [], "", config):
         events.append(event)
     return events
 
@@ -302,6 +308,96 @@ async def test_instruction_free_turn_clears_previously_populated_cache(
 
     prompt_reqs = [r for r in fake_server.requests if r[1].endswith("/prompt_async")]
     assert "system" not in prompt_reqs[-1][2]
+
+
+def _provider(provider_id: str, model_id: str, variants: list[str]) -> dict[str, Any]:
+    """One ``GET /config/providers`` row whose model offers *variants*."""
+    return {
+        "id": provider_id,
+        "models": {
+            model_id: {"id": model_id, "variants": {name: {} for name in variants}},
+        },
+    }
+
+
+def _prompt_bodies(server: _FakeServer) -> list[dict[str, Any]]:
+    return [r[2] for r in server.requests if r[1].endswith("/prompt_async")]
+
+
+@pytest.mark.parametrize(
+    ("model", "variants"),
+    [
+        ("openai/gpt-6.1-sol", ["none", "minimal", "low", "medium", "high", "xhigh"]),
+        ("anthropic/claude-opus-5-5", ["low", "medium", "high", "xhigh", "max"]),
+    ],
+)
+async def test_run_turn_applies_effort_as_the_models_variant(
+    fake_server: _FakeServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    variants: list[str],
+) -> None:
+    """OpenCode carries effort as the selected model's same-named variant."""
+    provider_id, model_id = model.split("/", 1)
+    fake_server.providers = [_provider(provider_id, model_id, variants)]
+    _seed_state(tmp_path, model_override=model)
+    executor = _executor(tmp_path, monkeypatch)
+
+    events = await _run(executor, "hello", ExecutorConfig(extra={"reasoning_effort": "medium"}))
+
+    assert [type(e) for e in events] == [TurnComplete]
+    body = _prompt_bodies(fake_server)[0]
+    assert body["model"] == {"providerID": provider_id, "modelID": model_id}
+    assert body["variant"] == "medium"
+
+
+async def test_run_turn_does_not_claim_an_effort_the_model_lacks(
+    fake_server: _FakeServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A model without that variant runs at its default and the gap is logged."""
+    fake_server.providers = [_provider("anthropic", "claude-opus-4-5", ["high", "max"])]
+    _seed_state(tmp_path, model_override="anthropic/claude-opus-4-5")
+    executor = _executor(tmp_path, monkeypatch)
+
+    with caplog.at_level("WARNING"):
+        events = await _run(
+            executor, "hello", ExecutorConfig(extra={"reasoning_effort": "medium"})
+        )
+
+    assert [type(e) for e in events] == [TurnComplete]
+    assert "variant" not in _prompt_bodies(fake_server)[0]
+    assert "effort 'medium' not applied" in caplog.text
+    assert "anthropic/claude-opus-4-5" in caplog.text
+
+
+async def test_run_turn_without_effort_sends_no_variant(
+    fake_server: _FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_state(tmp_path, model_override="openai/gpt-6.1-sol")
+    executor = _executor(tmp_path, monkeypatch)
+
+    await _run(executor, "hello")
+
+    assert "variant" not in _prompt_bodies(fake_server)[0]
+    assert all(r[1] != "/config/providers" for r in fake_server.requests)
+
+
+async def test_enqueued_message_keeps_the_turn_variant(
+    fake_server: _FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A queued prompt without its variant would reset OpenCode's session variant."""
+    fake_server.providers = [_provider("openai", "gpt-6.1-sol", ["low", "medium", "high"])]
+    _seed_state(tmp_path, model_override="openai/gpt-6.1-sol")
+    executor = _executor(tmp_path, monkeypatch)
+
+    await _run(executor, "hello", ExecutorConfig(extra={"reasoning_effort": "medium"}))
+    assert await executor.enqueue_session_message("k", "steer me") is True
+
+    assert [body.get("variant") for body in _prompt_bodies(fake_server)] == ["medium", "medium"]
 
 
 def test_capabilities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

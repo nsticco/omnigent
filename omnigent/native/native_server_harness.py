@@ -145,6 +145,22 @@ class NativeServerHarness(Executor):
         del system_prompt
         return None
 
+    async def _apply_turn_options(
+        self, prompt: NativePrompt, config: ExecutorConfig | None
+    ) -> NativePrompt:
+        """
+        Apply per-turn options the native server takes on the prompt.
+
+        Called after the model is applied, for every turn and for enqueued
+        messages (``config`` is ``None`` for those). The default applies none.
+
+        :param prompt: The prompt about to be sent.
+        :param config: Per-turn config, or ``None`` for an enqueued message.
+        :returns: The prompt to send.
+        """
+        del config
+        return prompt
+
     async def run_turn(
         self,
         messages: list[Message],
@@ -173,6 +189,7 @@ class NativeServerHarness(Executor):
             return
         if config is not None and config.model and not prompt.model:
             prompt = _with_model(prompt, config.model)
+        prompt = await self._apply_turn_options(prompt, config)
         error_msg: str | None = None
         async with self._inject_lock:
             gated_system_prompt = self._gate_system_prompt(system_prompt)
@@ -234,6 +251,7 @@ class NativeServerHarness(Executor):
         prompt = self._build_prompt(content)
         if prompt is None or prompt.is_empty():
             return False
+        prompt = await self._apply_turn_options(prompt, None)
         async with self._inject_lock:
             # Promoted queued messages have no system_prompt of their own —
             # reuse the value cached by the most recent normal run_turn call

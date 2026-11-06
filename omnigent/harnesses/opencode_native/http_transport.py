@@ -68,6 +68,9 @@ def build_prompt_payload(prompt: NativePrompt) -> _JsonObject:
     model = _split_model(prompt.model)
     if model is not None:
         payload["model"] = model
+    variant = prompt.metadata.get("variant")
+    if isinstance(variant, str) and variant:
+        payload["variant"] = variant
     return payload
 
 
@@ -216,6 +219,30 @@ class OpenCodeHttpTransport:
             return await client.prompt_async(session_id, build_prompt_payload(prompt))
         finally:
             await client.aclose()
+
+    async def model_variants(self, model: str) -> frozenset[str] | None:
+        """
+        Return the variant names OpenCode offers for *model*.
+
+        :param model: Qualified ``provider/model`` id.
+        :returns: The model's variant names, or ``None`` when OpenCode does
+            not list the model.
+        """
+        provider_id, _, model_id = model.partition("/")
+        client = self._client()
+        try:
+            providers = await client.list_providers()
+        finally:
+            await client.aclose()
+        for provider in providers:
+            models = provider.get("models")
+            if provider.get("id") != provider_id or not isinstance(models, Mapping):
+                continue
+            entry = models.get(model_id)
+            if isinstance(entry, Mapping):
+                variants = entry.get("variants")
+                return frozenset(variants) if isinstance(variants, Mapping) else frozenset()
+        return None
 
     async def abort(self, session_id: str) -> bool:
         """Abort active work via ``POST /session/{id}/abort``."""

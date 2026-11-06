@@ -28,6 +28,10 @@ CODEX_EFFORTS = OPENAI_EFFORTS
 # and dispatch clamp incompatible pairs; accept the full vocabulary here so
 # supported ``max``/``ultra`` settings survive harness-level validation.
 CODEX_NATIVE_EFFORTS = EFFORT_VALUES
+# OpenCode names each model's reasoning variants after the effort they apply
+# (``medium`` on GPT and Claude 5 models); a model's own variant list decides
+# per turn, so accept the full vocabulary here.
+OPENCODE_EFFORTS = EFFORT_VALUES
 OPENAI_AGENTS_EFFORTS = OPENAI_EFFORTS
 GEMINI_EFFORTS = frozenset({"low", "medium", "high"})
 ANTIGRAVITY_EFFORTS = GEMINI_EFFORTS
@@ -141,6 +145,7 @@ def efforts_for_harness(harness: str | None) -> frozenset[str] | None:
         EffortFamily.COPILOT: COPILOT_EFFORTS,
         EffortFamily.PI: PI_EFFORTS,
         EffortFamily.CODEX_NATIVE: CODEX_NATIVE_EFFORTS,
+        EffortFamily.OPENCODE: OPENCODE_EFFORTS,
     }.get(capabilities.effort, frozenset())
 
 

@@ -505,7 +505,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         _IM.NATIVE_SERVER,
         _EL.SSE_PERMISSION,
         _RS.WARM_REATTACH,
-        _EF.NONE,
+        _EF.OPENCODE,
         _MF.MULTI,
         _AU.OWN_AUTH,
         subagents=True,

@@ -61,6 +61,9 @@ class EffortFamily(str, Enum):
     # The real codex process is the per-model authority on reasoning levels
     # (Sol reaches ``ultra``); the SDK codex wire caps at ``xhigh``.
     CODEX_NATIVE = "codex-native"
+    # OpenCode applies effort as the selected model's same-named variant, so
+    # its catalog is the per-model authority.
+    OPENCODE = "opencode"
 
 
 class ModelFamily(str, Enum):

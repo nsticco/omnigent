@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -24,8 +25,11 @@ from omnigent.harnesses.opencode_native.bridge import (
     read_bridge_state,
 )
 from omnigent.harnesses.opencode_native.http_transport import OpenCodeHttpTransport
+from omnigent.inner.executor import ExecutorConfig
 from omnigent.native.native_server_harness import NativeServerHarness
 from omnigent.native.native_server_transport import NativePrompt
+
+_logger = logging.getLogger(__name__)
 
 # Canonical harness id, surfaced in harness error messages.
 OPENCODE_NATIVE_HARNESS_ID = "opencode-native"
@@ -42,13 +46,18 @@ class OpenCodeNativeExecutor(NativeServerHarness):
     def __init__(self, bridge_dir: Path | None = None) -> None:
         self._bridge_dir = bridge_dir or _bridge_dir_from_env()
         self._request_session_id = _request_session_id_from_env()
+        # The latest turn's effort. Enqueued prompts repeat its variant, since
+        # a prompt without one resets OpenCode's session variant.
+        self._turn_effort: str | None = None
+        self._model_variants: dict[str, frozenset[str] | None] = {}
+        self._opencode_transport = OpenCodeHttpTransport(bridge_dir=self._bridge_dir)
         super().__init__(
             harness_id=OPENCODE_NATIVE_HARNESS_ID,
             # OpenCode has no live-steer endpoint, so a mid-turn message is
             # admitted as a new prompt and the native server's own queue
             # promotes it when the active turn finishes.
             supports_enqueue=True,
-            transport=OpenCodeHttpTransport(bridge_dir=self._bridge_dir),
+            transport=self._opencode_transport,
             resolve_session_id=self._resolve_opencode_session_id,
             build_prompt=self._build_prompt_with_model_override,
         )
@@ -84,6 +93,53 @@ class OpenCodeNativeExecutor(NativeServerHarness):
         if not model:
             return prompt
         return dataclasses.replace(prompt, model=model)
+
+    async def _apply_turn_options(
+        self, prompt: NativePrompt, config: ExecutorConfig | None
+    ) -> NativePrompt:
+        """
+        Carry the turn's effort as the selected model's same-named variant.
+
+        OpenCode takes reasoning effort only as a per-model variant
+        (``medium`` on GPT and Claude 5 models). A model without that variant
+        runs at its default; the gap is logged rather than claimed applied.
+
+        :param prompt: The prompt with its model applied.
+        :param config: Per-turn config, or ``None`` for an enqueued message.
+        :returns: The prompt, with ``metadata["variant"]`` when applied.
+        """
+        if config is not None:
+            effort = config.extra.get("reasoning_effort")
+            self._turn_effort = str(effort).strip().lower() if effort else None
+        effort = self._turn_effort
+        if not effort or not prompt.model:
+            return prompt
+        if prompt.model not in self._model_variants:
+            try:
+                variants = await self._opencode_transport.model_variants(prompt.model)
+            except Exception:
+                _logger.warning(
+                    "opencode-native: could not read variants for %s", prompt.model, exc_info=True
+                )
+                return prompt
+            self._model_variants[prompt.model] = variants
+        variants = self._model_variants[prompt.model]
+        if variants is None:
+            _logger.warning(
+                "opencode-native: effort %r not applied: OpenCode does not list model %s",
+                effort,
+                prompt.model,
+            )
+            return prompt
+        if effort not in variants:
+            _logger.warning(
+                "opencode-native: effort %r not applied: model %s offers variants %s",
+                effort,
+                prompt.model,
+                sorted(variants),
+            )
+            return prompt
+        return dataclasses.replace(prompt, metadata={**prompt.metadata, "variant": effort})
 
     async def _resolve_opencode_session_id(self) -> str | None:
         """
