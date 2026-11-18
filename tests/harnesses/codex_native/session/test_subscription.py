@@ -324,11 +324,14 @@ def test_supervise_forwarder_subscribes_without_replaying_dead_letters(
 
     asyncio.run(run())
 
-    assert fake_client.requests == [
+    thread_requests = [r for r in fake_client.requests if not r[0].startswith("account/")]
+    assert thread_requests == [
         ("thread/resume", {"threadId": "thread_123", "excludeTurns": True}),
         ("thread/goal/get", {"threadId": "thread_123"}),
         ("thread/backgroundTerminals/list", {"threadId": "thread_123"}),
     ]
+    # The account usage reader shares the connection and never forces renewal.
+    assert ("account/read", {"refreshToken": False}) in fake_client.requests
     assert fake_client.closed
     # Only the startup background-work sync reaches the server; no dead letter is replayed.
     assert [json.loads(request.content)["type"] for request in ap_requests] == [
@@ -379,11 +382,14 @@ def test_supervise_forwarder_resumes_when_it_opens_client(
     asyncio.run(run())
 
     assert fake_client.connected
-    assert fake_client.requests == [
+    thread_requests = [r for r in fake_client.requests if not r[0].startswith("account/")]
+    assert thread_requests == [
         ("thread/resume", {"threadId": "thread_123", "excludeTurns": True}),
         ("thread/goal/get", {"threadId": "thread_123"}),
         ("thread/backgroundTerminals/list", {"threadId": "thread_123"}),
     ]
+    # The account usage reader shares the connection and never forces renewal.
+    assert ("account/read", {"refreshToken": False}) in fake_client.requests
     assert fake_client.closed
 
 

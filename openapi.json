@@ -1352,6 +1352,166 @@
         "title": "ClientTaskCancelEvent",
         "type": "object"
       },
+      "CodexAccountSummary": {
+        "additionalProperties": false,
+        "description": "The display fields `account/read` reported for the session's login.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Account email, when reported.",
+            "title": "Email"
+          },
+          "plan_type": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Plan, e.g. `\"plus\"`.",
+            "title": "Plan Type"
+          },
+          "type": {
+            "description": "Codex account type, e.g. `\"chatgpt\"`.",
+            "maxLength": 32,
+            "title": "Type",
+            "type": "string"
+          },
+          "workspace_name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "ChatGPT workspace name, when reported.",
+            "title": "Workspace Name"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "CodexAccountSummary",
+        "type": "object"
+      },
+      "CodexAccountUsage": {
+        "additionalProperties": false,
+        "description": "One authoritative Codex account and rate-limit read from a native session.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodexAccountSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Account display fields, when both account reads agreed."
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Account the usage snapshot belongs to.",
+            "title": "Account Id"
+          },
+          "codex_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The Codex build that answered, when known.",
+            "title": "Codex Version"
+          },
+          "observed_at": {
+            "description": "Epoch seconds when the rate limits were read.",
+            "exclusiveMinimum": 0,
+            "format": "double",
+            "title": "Observed At",
+            "type": "number"
+          },
+          "rate_limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodexRateLimitBucket"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The legacy single-bucket view."
+          },
+          "rate_limits_by_limit_id": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/CodexRateLimitBucket"
+                },
+                "maxProperties": 16,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The multi-bucket view by limit id.",
+            "title": "Rate Limits By Limit Id"
+          },
+          "routing_account_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "ChatGPT account from workspace routing.",
+            "title": "Routing Account Id"
+          }
+        },
+        "required": [
+          "observed_at"
+        ],
+        "title": "CodexAccountUsage",
+        "type": "object"
+      },
       "CodexGoalObject": {
         "description": "Current Codex goal state for a Codex-native session.\n\nMirrors Codex app-server's `ThreadGoal` shape using Omnigent's\nsnake-case API convention. `created_at` and `updated_at` are optional\nbecause older app-server documentation examples omit them even though the\ncurrent protocol includes them.",
         "properties": {
@@ -1454,6 +1614,133 @@
           "goal"
         ],
         "title": "CodexGoalResponse",
+        "type": "object"
+      },
+      "CodexRateLimitBucket": {
+        "additionalProperties": false,
+        "description": "One metered Codex quota pool.",
+        "properties": {
+          "limit_id": {
+            "anyOf": [
+              {
+                "maxLength": 48,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Metered limit id, e.g. `\"codex\"` for the general pool.",
+            "title": "Limit Id"
+          },
+          "limit_name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Display name the backend gave the pool, if any.",
+            "title": "Limit Name"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Model slug the pool is explicitly scoped to, if any.",
+            "title": "Model"
+          },
+          "primary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodexRateLimitWindow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The bucket's primary window, if reported."
+          },
+          "secondary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodexRateLimitWindow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The bucket's secondary window, if reported."
+          }
+        },
+        "title": "CodexRateLimitBucket",
+        "type": "object"
+      },
+      "CodexRateLimitWindow": {
+        "additionalProperties": false,
+        "description": "One window of a Codex rate-limit bucket, as `account/rateLimits/read`\nreported it.",
+        "properties": {
+          "resets_at": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Window reset as epoch seconds, or `None`.",
+            "title": "Resets At"
+          },
+          "used_percent": {
+            "anyOf": [
+              {
+                "format": "double",
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Share of the window consumed, 0-100 (above 100 is overage).",
+            "title": "Used Percent"
+          },
+          "window_duration_mins": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Window length in minutes, e.g. `10080` for a week. `None` when not reported.",
+            "title": "Window Duration Mins"
+          }
+        },
+        "title": "CodexRateLimitWindow",
         "type": "object"
       },
       "CompactionCompletedEvent": {
@@ -11767,6 +12054,18 @@
       "SessionUsageEvent": {
         "description": "Token-usage update from a terminal-backed integration.\n\nEmitted after an `external_session_usage` POST from an\nout-of-AP runtime (e.g. the `omnigent claude` transcript\nforwarder). Either field may be absent; clients should leave\ncached values untouched for missing fields.",
         "properties": {
+          "codex_account_usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodexAccountUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A native Codex session's account and rate-limit read, relayed as reported and not persisted. `None` when this broadcast carries none. Category: **transient** (SSE-only). On reconnect, clients seed the ring from the session snapshot's `last_total_tokens` and `context_window`, the cost indicator from `total_cost_usd`, and the per-model token breakdown from `usage_by_model`."
+          },
           "context_tokens": {
             "anyOf": [
               {
@@ -11810,7 +12109,7 @@
               }
             ],
             "default": null,
-            "description": "The account's plan quota from a native status line, relayed as reported and not persisted. `None` when unchanged. Category: **transient** (SSE-only). On reconnect, clients seed the ring from the session snapshot's `last_total_tokens` and `context_window`, the cost indicator from `total_cost_usd`, and the per-model token breakdown from `usage_by_model`."
+            "description": "The account's plan quota from a native status line, relayed as reported and not persisted. `None` when unchanged."
           },
           "sequence_number": {
             "anyOf": [

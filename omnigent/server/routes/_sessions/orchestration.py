@@ -383,6 +383,7 @@ from omnigent.server.sandbox_profile_launch import prepare_profile, record_profi
 from omnigent.server.schemas import (
     BackgroundTaskInfo,
     ChildSessionSummary,
+    CodexAccountUsage,
     CreatedSessionResponse,
     ElicitationRequestEvent,
     ElicitationRequestParams,
@@ -2103,8 +2104,9 @@ async def _persist_external_session_usage(
 
     At least one of ``data.context_tokens`` (non-negative int),
     ``data.context_window`` (positive int), a cumulative usage field
-    (:func:`_persist_native_cumulative_usage`), or ``data.rate_limits``
-    (:class:`SessionRateLimits`) must be present. Plan quota is relayed on
+    (:func:`_persist_native_cumulative_usage`), ``data.rate_limits``
+    (:class:`SessionRateLimits`), or ``data.codex_account_usage``
+    (:class:`CodexAccountUsage`) must be present. Plan quota is relayed on
     the ``session.usage`` broadcast only; nothing about it is stored.
 
     :param session_id: Session/conversation identifier.
@@ -2148,30 +2150,35 @@ async def _persist_external_session_usage(
         "cumulative_output_tokens",
     )
     has_cumulative = any(body.data.get(k) is not None for k in _CUMULATIVE_USAGE_KEYS)
-    rate_limits: SessionRateLimits | None = None
-    if body.data.get("rate_limits") is not None:
+    quota: dict[str, Any] = {}
+    for field, model in (
+        ("rate_limits", SessionRateLimits),
+        ("codex_account_usage", CodexAccountUsage),
+    ):
+        if body.data.get(field) is None:
+            continue
         try:
-            rate_limits = SessionRateLimits.model_validate(body.data["rate_limits"])
+            quota[field] = model.model_validate(body.data[field])
         except ValidationError as exc:
             raise OmnigentError(
-                "external_session_usage data.rate_limits is malformed",
+                f"external_session_usage data.{field} is malformed",
                 code=ErrorCode.INVALID_INPUT,
             ) from exc
     if raw_tokens is None and raw_window is None and not has_cumulative:
-        if rate_limits is not None:
+        if quota:
             session_stream.publish(
                 session_id,
                 SessionUsageEvent(
                     type="session.usage",
                     conversation_id=session_id,
-                    rate_limits=rate_limits,
+                    **quota,
                 ).model_dump(exclude_none=True),
             )
             return None
         raise OmnigentError(
             "external_session_usage requires at least one of "
             "data.context_tokens, data.context_window, a cumulative usage field, "
-            "or data.rate_limits",
+            "data.rate_limits, or data.codex_account_usage",
             code=ErrorCode.INVALID_INPUT,
         )
 
@@ -2249,8 +2256,7 @@ async def _persist_external_session_usage(
         event_payload["total_cost_usd"] = subtree_cost
     if usage_by_model is not None:
         event_payload["usage_by_model"] = usage_by_model
-    if rate_limits is not None:
-        event_payload["rate_limits"] = rate_limits
+    event_payload.update(quota)
     event = SessionUsageEvent(**event_payload)
     session_stream.publish(session_id, event.model_dump(exclude_none=True))
     # This session's usage also moves its ANCESTORS' subtree cost (its spend

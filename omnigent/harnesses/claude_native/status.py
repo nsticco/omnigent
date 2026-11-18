@@ -119,29 +119,26 @@ def normalize_rate_limits(
     return windows
 
 
+def _finite_number(value: object) -> float | None:
+    """Return ``value`` as a finite float, or ``None`` for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
 def _rate_limit_values(window: object) -> dict[str, object] | None:
     """Return a window's valid fields, or ``None`` when it reports none."""
     if not isinstance(window, dict):
         return None
-    used = window.get("used_percentage")
-    resets = window.get("resets_at")
-    used_ok = (
-        isinstance(used, (int, float))
-        and not isinstance(used, bool)
-        and math.isfinite(used)
-        and used >= 0
-    )
-    resets_ok = (
-        isinstance(resets, (int, float))
-        and not isinstance(resets, bool)
-        and math.isfinite(resets)
-        and resets > 0
-    )
-    if not used_ok and not resets_ok:
+    used = _finite_number(window.get("used_percentage"))
+    resets = _finite_number(window.get("resets_at"))
+    used = used if used is not None and used >= 0 else None
+    resets = resets if resets is not None and resets > 0 else None
+    if used is None and resets is None:
         return None
     return {
-        "used_percentage": float(used) if used_ok else None,
-        "resets_at": int(resets) if resets_ok else None,
+        "used_percentage": used,
+        "resets_at": int(resets) if resets is not None else None,
     }
 
 

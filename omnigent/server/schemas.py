@@ -3917,6 +3917,89 @@ class SessionRateLimits(BaseModel):
     claude_code_version: str | None = Field(default=None, max_length=32)
 
 
+class CodexRateLimitWindow(BaseModel):
+    """
+    One window of a Codex rate-limit bucket, as ``account/rateLimits/read``
+    reported it.
+
+    :param used_percent: Share of the window consumed, 0-100 (above 100 is
+        overage).
+    :param window_duration_mins: Window length in minutes, e.g. ``10080``
+        for a week. ``None`` when not reported.
+    :param resets_at: Window reset as epoch seconds, or ``None``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    used_percent: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    window_duration_mins: int | None = Field(default=None, gt=0)
+    resets_at: int | None = Field(default=None, gt=0)
+
+
+class CodexRateLimitBucket(BaseModel):
+    """
+    One metered Codex quota pool.
+
+    :param limit_id: Metered limit id, e.g. ``"codex"`` for the general pool.
+    :param limit_name: Display name the backend gave the pool, if any.
+    :param model: Model slug the pool is explicitly scoped to, if any.
+    :param primary: The bucket's primary window, if reported.
+    :param secondary: The bucket's secondary window, if reported.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit_id: str | None = Field(default=None, max_length=48)
+    limit_name: str | None = Field(default=None, max_length=128)
+    model: str | None = Field(default=None, max_length=128)
+    primary: CodexRateLimitWindow | None = None
+    secondary: CodexRateLimitWindow | None = None
+
+
+class CodexAccountSummary(BaseModel):
+    """
+    The display fields ``account/read`` reported for the session's login.
+
+    :param type: Codex account type, e.g. ``"chatgpt"``.
+    :param email: Account email, when reported.
+    :param plan_type: Plan, e.g. ``"plus"``.
+    :param workspace_name: ChatGPT workspace name, when reported.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(max_length=32)
+    email: str | None = Field(default=None, max_length=320)
+    plan_type: str | None = Field(default=None, max_length=64)
+    workspace_name: str | None = Field(default=None, max_length=128)
+
+
+class CodexAccountUsage(BaseModel):
+    """
+    One authoritative Codex account and rate-limit read from a native session.
+
+    :param observed_at: Epoch seconds when the rate limits were read.
+    :param codex_version: The Codex build that answered, when known.
+    :param account: Account display fields, when both account reads agreed.
+    :param routing_account_id: ChatGPT account from workspace routing.
+    :param account_id: Account the usage snapshot belongs to.
+    :param rate_limits: The legacy single-bucket view.
+    :param rate_limits_by_limit_id: The multi-bucket view by limit id.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    observed_at: float = Field(gt=0, allow_inf_nan=False)
+    codex_version: str | None = Field(default=None, max_length=32)
+    account: CodexAccountSummary | None = None
+    routing_account_id: str | None = Field(default=None, max_length=128)
+    account_id: str | None = Field(default=None, max_length=128)
+    rate_limits: CodexRateLimitBucket | None = None
+    rate_limits_by_limit_id: dict[str, CodexRateLimitBucket] | None = Field(
+        default=None, max_length=16
+    )
+
+
 class SessionUsageEvent(_SSEEventBase):
     """
     Token-usage update from a terminal-backed integration.
@@ -3949,6 +4032,9 @@ class SessionUsageEvent(_SSEEventBase):
         no per-model change, so the client keeps its cached map.
     :param rate_limits: The account's plan quota from a native status line,
         relayed as reported and not persisted. ``None`` when unchanged.
+    :param codex_account_usage: A native Codex session's account and
+        rate-limit read, relayed as reported and not persisted. ``None``
+        when this broadcast carries none.
 
     Category: **transient** (SSE-only). On reconnect, clients seed
     the ring from the session snapshot's ``last_total_tokens`` and
@@ -3963,6 +4049,7 @@ class SessionUsageEvent(_SSEEventBase):
     total_cost_usd: float | None = None
     usage_by_model: dict[str, ModelUsage] | None = None
     rate_limits: SessionRateLimits | None = None
+    codex_account_usage: CodexAccountUsage | None = None
 
 
 class SessionModelEvent(_SSEEventBase):

@@ -31,6 +31,10 @@ from omnigent.harnesses.codex_egress import (
     is_connection_retry,
 )
 from omnigent.harnesses.codex_native import side_chat
+from omnigent.harnesses.codex_native.account_usage import (
+    ACCOUNT_RATE_LIMITS_UPDATED_METHOD,
+    CodexAccountUsageReader,
+)
 from omnigent.harnesses.codex_native.app_server import (
     CodexAppServerClient,
     CodexAppServerResponseError,
@@ -2687,10 +2691,21 @@ async def supervise_forwarder(
             ),
             name="codex-native-forwarder-side-chat",
         )
+        account_usage = CodexAccountUsageReader(
+            client,
+            functools.partial(_post_account_usage, ap_client, target),
+        )
+        account_usage_task = asyncio.create_task(
+            account_usage.run(), name="codex-native-forwarder-account-usage"
+        )
         await _sleep(0)
         stream_error: BaseException | None = None
         try:
             async for event in client.iter_events():
+                if event.get("method") == ACCOUNT_RATE_LIMITS_UPDATED_METHOD:
+                    # Sparse: only a hint to read the account's full quota.
+                    account_usage.hint()
+                    continue
                 try:
                     superseded_session_id = target.session_id
                     rotated = await _maybe_rotate_session_on_thread_started(
@@ -2771,7 +2786,7 @@ async def supervise_forwarder(
             raise
         finally:
             # Stop producers before draining their output while the HTTP client is open.
-            background_tasks = [subscribe_task, side_chat_task]
+            background_tasks = [subscribe_task, side_chat_task, account_usage_task]
             if mcp_settle_timer is not None:
                 background_tasks.append(mcp_settle_timer)
             if forwarder_state.background_terminal_poll is not None:
@@ -2804,6 +2819,29 @@ async def supervise_forwarder(
                 )
             if stream_error is None and cleanup_errors:
                 raise cleanup_errors[0]
+
+
+async def _post_account_usage(
+    ap_client: httpx.AsyncClient,
+    target: _ForwarderTarget,
+    projection: dict[str, object],
+) -> bool:
+    """
+    Relay one account and rate-limit read on the current parent session.
+
+    :param ap_client: HTTP client for Omnigent event posts.
+    :param target: Live forwarder target, read for the current session id.
+    :param projection: Allowlisted ``codex_account_usage`` projection.
+    :returns: Whether Omnigent accepted the post.
+    """
+    response = await _post_session_event(
+        ap_client,
+        target.session_id,
+        event_type="external_session_usage",
+        data={"codex_account_usage": projection},
+    )
+    _log_failed_session_event_post("external_session_usage", response)
+    return response is not None and response.status_code < 400
 
 
 async def _drive_side_chat_requests(

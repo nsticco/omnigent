@@ -7131,6 +7131,64 @@ async def test_post_external_session_usage_relays_status_line_rate_limits(
     assert len(published) == 1
 
 
+async def test_post_external_session_usage_relays_codex_account_usage(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A native Codex account read is relayed on ``session.usage``, never stored.
+
+    The projection is validated strictly, so a token-shaped extra field or an
+    unreadable window is rejected rather than broadcast.
+    """
+    published: list[tuple[str, dict[str, Any]]] = []
+    _capture_published(monkeypatch, published)
+    agent = await create_test_agent(client)
+    session = await _create_session(client, agent["id"])
+    window = {"used_percent": 40.0, "window_duration_mins": 10080, "resets_at": 1795500000}
+    bucket = {
+        "limit_id": "codex",
+        "limit_name": None,
+        "model": None,
+        "primary": None,
+        "secondary": window,
+    }
+    usage = {
+        "observed_at": 1795000000.5,
+        "codex_version": None,
+        "account": {"type": "chatgpt", "email": "person@example.com", "plan_type": "plus"},
+        "routing_account_id": "acct-1111",
+        "account_id": "acct-1111",
+        "rate_limits": bucket,
+        "rate_limits_by_limit_id": {"codex": bucket},
+    }
+
+    resp = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        json={"type": "external_session_usage", "data": {"codex_account_usage": usage}},
+    )
+    assert resp.status_code == 202, resp.text
+    [(session_id, event)] = published
+    assert session_id == session["id"]
+    assert event["type"] == "session.usage"
+    assert event["codex_account_usage"]["rate_limits"]["secondary"] == window
+    assert event["codex_account_usage"]["account"]["email"] == "person@example.com"
+    snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+    assert "codex_account_usage" not in snapshot
+
+    for malformed in (
+        {**usage, "access_token": "x"},
+        {**usage, "rate_limits": {**bucket, "secondary": {**window, "used_percent": -1}}},
+        {**usage, "observed_at": None},
+    ):
+        resp = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={"type": "external_session_usage", "data": {"codex_account_usage": malformed}},
+        )
+        assert resp.status_code == 400, resp.text
+    assert len(published) == 1
+
+
 async def test_external_session_usage_broadcasts_parent_subtree_cost_not_own(
     client: httpx.AsyncClient,
     db_uri: str,
