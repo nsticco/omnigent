@@ -5572,6 +5572,54 @@
         "title": "QueuedEvent",
         "type": "object"
       },
+      "RateLimitWindowUsage": {
+        "additionalProperties": false,
+        "description": "One plan rate-limit window reported by a native harness's status line.",
+        "properties": {
+          "observed_at": {
+            "description": "Epoch seconds when these values were last seen to change; a re-render of cached values keeps the earlier time.",
+            "exclusiveMinimum": 0,
+            "format": "double",
+            "title": "Observed At",
+            "type": "number"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Window reset as epoch seconds, or `None`.",
+            "title": "Resets At"
+          },
+          "used_percentage": {
+            "anyOf": [
+              {
+                "format": "double",
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Share of the window consumed, 0-100 (above 100 is overage). `None` when not reported.",
+            "title": "Used Percentage"
+          }
+        },
+        "required": [
+          "observed_at"
+        ],
+        "title": "RateLimitWindowUsage",
+        "type": "object"
+      },
       "ReadStatePutRequest": {
         "additionalProperties": false,
         "description": "Request body for `PUT /v1/sessions/{session_id}/read-state`.\n\nSets the *calling user's* read tracking for one session. Mirrors the\ntwo values the web client keeps per session: a \"last seen\" wall-clock\nbaseline (seconds since epoch) and an explicit \"marked unread\"\noverride. The unread dot shows when `updated_at > last_seen` and the\nsession is finished; `unread` separately pins the override so the\nthread the user is *viewing* (or a running one) still surfaces the dot\nwhere the automatic \"seen\" logic would otherwise suppress it.",
@@ -9638,6 +9686,52 @@
         "title": "SessionPullRequestSummary",
         "type": "object"
       },
+      "SessionRateLimits": {
+        "additionalProperties": false,
+        "description": "Plan quota from Claude Code's statusLine `rate_limits` block.",
+        "properties": {
+          "claude_code_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The Claude Code build that reported it.",
+            "title": "Claude Code Version"
+          },
+          "five_hour": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RateLimitWindowUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The short (five-hour) window, when reported."
+          },
+          "seven_day": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RateLimitWindowUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The weekly window, when reported."
+          }
+        },
+        "title": "SessionRateLimits",
+        "type": "object"
+      },
       "SessionReasoningEffortEvent": {
         "description": "Active reasoning-effort update from a terminal-backed integration.\n\nEmitted after an `external_reasoning_effort_change` POST from a native\nterminal forwarder when the user changes the thinking level inside the\nterminal UI. Lets the web effort picker reflect a TUI-side switch without\na reload.",
         "properties": {
@@ -11706,6 +11800,18 @@
             "title": "Conversation Id",
             "type": "string"
           },
+          "rate_limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionRateLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The account's plan quota from a native status line, relayed as reported and not persisted. `None` when unchanged. Category: **transient** (SSE-only). On reconnect, clients seed the ring from the session snapshot's `last_total_tokens` and `context_window`, the cost indicator from `total_cost_usd`, and the per-model token breakdown from `usage_by_model`."
+          },
           "sequence_number": {
             "anyOf": [
               {
@@ -11752,7 +11858,7 @@
               }
             ],
             "default": null,
-            "description": "Per-model breakdown of the same subtree usage after this update, keyed by raw harness model id, e.g. `{\"claude-sonnet-4-6\": ModelUsage(input_tokens=12000, ...)}`. `None` (stripped by `exclude_none`) on a broadcast that carries no per-model change, so the client keeps its cached map. Category: **transient** (SSE-only). On reconnect, clients seed the ring from the session snapshot's `last_total_tokens` and `context_window`, the cost indicator from `total_cost_usd`, and the per-model token breakdown from `usage_by_model`.",
+            "description": "Per-model breakdown of the same subtree usage after this update, keyed by raw harness model id, e.g. `{\"claude-sonnet-4-6\": ModelUsage(input_tokens=12000, ...)}`. `None` (stripped by `exclude_none`) on a broadcast that carries no per-model change, so the client keeps its cached map.",
             "title": "Usage By Model"
           }
         },

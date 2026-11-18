@@ -7076,6 +7076,61 @@ async def test_post_external_session_usage_publishes_session_usage(
     assert snapshot["last_total_tokens"] == 44568
 
 
+async def test_post_external_session_usage_relays_status_line_rate_limits(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A quota-only ``external_session_usage`` relays plan ``rate_limits``.
+
+    Claude Code's statusLine carries account quota independently of the
+    context window, so the post needs no token or window field. The block
+    is validated strictly and broadcast as reported; nothing is stored.
+    """
+    published: list[tuple[str, dict[str, Any]]] = []
+    _capture_published(monkeypatch, published)
+    agent = await create_test_agent(client)
+    session = await _create_session(client, agent["id"])
+    rate_limits = {
+        "seven_day": {
+            "used_percentage": 42.0,
+            "resets_at": 1795000000,
+            "observed_at": 1700000000.5,
+        },
+        "claude_code_version": "2.1.281",
+    }
+
+    resp = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        json={"type": "external_session_usage", "data": {"rate_limits": rate_limits}},
+    )
+    assert resp.status_code == 202, resp.text
+    assert published == [
+        (
+            session["id"],
+            {
+                "type": "session.usage",
+                "conversation_id": session["id"],
+                "rate_limits": rate_limits,
+            },
+        )
+    ]
+    snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+    assert "rate_limits" not in snapshot
+
+    for malformed in (
+        {"seven_day": {"used_percentage": 42, "observed_at": 1.0, "token": "x"}},
+        {"weekly": {"used_percentage": 42, "observed_at": 1.0}},
+        {"seven_day": {"used_percentage": -1, "observed_at": 1.0}},
+    ):
+        resp = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={"type": "external_session_usage", "data": {"rate_limits": malformed}},
+        )
+        assert resp.status_code == 400, resp.text
+    assert len(published) == 1
+
+
 async def test_external_session_usage_broadcasts_parent_subtree_cost_not_own(
     client: httpx.AsyncClient,
     db_uri: str,

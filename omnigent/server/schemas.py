@@ -3883,6 +3883,40 @@ class SessionStatusEvent(_SSEEventBase):
     blocked_on: str | None = None
 
 
+class RateLimitWindowUsage(BaseModel):
+    """
+    One plan rate-limit window reported by a native harness's status line.
+
+    :param used_percentage: Share of the window consumed, 0-100 (above 100
+        is overage). ``None`` when not reported.
+    :param resets_at: Window reset as epoch seconds, or ``None``.
+    :param observed_at: Epoch seconds when these values were last seen to
+        change; a re-render of cached values keeps the earlier time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    used_percentage: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    resets_at: int | None = Field(default=None, gt=0)
+    observed_at: float = Field(gt=0, allow_inf_nan=False)
+
+
+class SessionRateLimits(BaseModel):
+    """
+    Plan quota from Claude Code's statusLine ``rate_limits`` block.
+
+    :param five_hour: The short (five-hour) window, when reported.
+    :param seven_day: The weekly window, when reported.
+    :param claude_code_version: The Claude Code build that reported it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    five_hour: RateLimitWindowUsage | None = None
+    seven_day: RateLimitWindowUsage | None = None
+    claude_code_version: str | None = Field(default=None, max_length=32)
+
+
 class SessionUsageEvent(_SSEEventBase):
     """
     Token-usage update from a terminal-backed integration.
@@ -3913,6 +3947,8 @@ class SessionUsageEvent(_SSEEventBase):
         ``{"claude-sonnet-4-6": ModelUsage(input_tokens=12000, ...)}``.
         ``None`` (stripped by ``exclude_none``) on a broadcast that carries
         no per-model change, so the client keeps its cached map.
+    :param rate_limits: The account's plan quota from a native status line,
+        relayed as reported and not persisted. ``None`` when unchanged.
 
     Category: **transient** (SSE-only). On reconnect, clients seed
     the ring from the session snapshot's ``last_total_tokens`` and
@@ -3926,6 +3962,7 @@ class SessionUsageEvent(_SSEEventBase):
     context_window: int | None = None
     total_cost_usd: float | None = None
     usage_by_model: dict[str, ModelUsage] | None = None
+    rate_limits: SessionRateLimits | None = None
 
 
 class SessionModelEvent(_SSEEventBase):

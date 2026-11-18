@@ -1,11 +1,12 @@
-"""Claude Code statusLine wrapper that captures context-window data.
+"""Claude Code statusLine wrapper that captures context-window and quota data.
 
 Claude Code only exposes ``context_window`` (the model's real window
-size and live usage) to the ``statusLine`` command via stdin. This
-wrapper reads that stdin, writes the relevant fields atomically to
-``bridge_dir/context.json`` for the forwarder to consume, then exec's
-the user's pre-existing statusLine command (if any) with the same
-stdin so its terminal output still renders.
+size and live usage) and the account's plan ``rate_limits`` to the
+``statusLine`` command via stdin. This wrapper reads that stdin, writes
+the relevant fields atomically to ``bridge_dir/context.json`` for the
+forwarder to consume, then exec's the user's pre-existing statusLine
+command (if any) with the same stdin so its terminal output still
+renders.
 """
 
 from __future__ import annotations
@@ -13,10 +14,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _CONTEXT_FILE = "context.json"
@@ -25,16 +28,144 @@ _CONTEXT_FILE = "context.json"
 # normalizes it into ``context.json`` via :func:`sync_raw_status_context`.
 CONTEXT_RAW_FILE = "context_raw.json"
 _MAX_VERSION_CHARS = 32
+# Plan rate-limit windows the statusLine reports. Other keys are ignored:
+# an unrecognized window is never reported as one of these.
+RATE_LIMIT_WINDOWS = ("five_hour", "seven_day")
 
 
-def normalize_status_payload(payload: dict[str, object]) -> dict[str, object] | None:
+def normalize_status_payload(
+    payload: dict[str, object],
+    previous: dict[str, object] | None = None,
+    captured_at: float | None = None,
+) -> dict[str, object] | None:
     """
     Extract the ``context.json`` record from a raw statusLine payload.
 
+    Context fields and plan quota are read independently, so quota still
+    records when ``context_window`` is absent (the previous record's
+    context fields are kept) and vice versa.
+
     :param payload: Decoded statusLine stdin JSON from Claude Code.
+    :param previous: The record currently in ``context.json``, if any.
+        Its quota windows keep their capture time while their values are
+        unchanged, because Claude Code re-renders cached rate limits.
+    :param captured_at: Epoch seconds when this payload was captured;
+        defaults to now.
     :returns: The record to persist, or ``None`` when the payload carries
-        no usable ``context_window`` (nothing worth recording).
+        neither a usable ``context_window`` nor quota.
     """
+    record = _context_record(payload)
+    rate_limits = normalize_rate_limits(
+        payload,
+        (previous or {}).get("rate_limits"),
+        time.time() if captured_at is None else captured_at,
+    )
+    if record is None:
+        if rate_limits is None:
+            return None
+        record = {key: value for key, value in (previous or {}).items() if key != "rate_limits"}
+    if rate_limits is not None:
+        record["rate_limits"] = rate_limits
+    return record
+
+
+def normalize_rate_limits(
+    payload: dict[str, object],
+    previous: object,
+    captured_at: float,
+) -> dict[str, object] | None:
+    """
+    Read ``rate_limits.five_hour`` / ``seven_day`` from a statusLine payload.
+
+    ``used_percentage`` is 0-100 and ``resets_at`` is epoch seconds; each is
+    independently nullable. Every window carries ``observed_at``: the time
+    its values last changed. A re-render of unchanged cached values keeps
+    the earlier time, and a window this payload omits keeps its previous
+    reading, so freshness only advances with newly observed provider data.
+
+    :param payload: Decoded statusLine stdin JSON from Claude Code.
+    :param previous: The previous record's ``rate_limits`` block, if any.
+    :param captured_at: Epoch seconds when this payload was captured.
+    :returns: ``{"five_hour": {...}, "seven_day": {...},
+        "claude_code_version": "2.1.281"}`` with only the windows known so
+        far, or ``None`` when no window has been reported.
+    """
+    known = previous if isinstance(previous, dict) else {}
+    raw = payload.get("rate_limits")
+    raw = raw if isinstance(raw, dict) else {}
+    windows: dict[str, object] = {}
+    for key in RATE_LIMIT_WINDOWS:
+        before = known.get(key)
+        values = _rate_limit_values(raw.get(key))
+        if values is None:
+            if isinstance(before, dict):
+                windows[key] = before
+            continue
+        unchanged = isinstance(before, dict) and all(
+            before.get(field) == value for field, value in values.items()
+        )
+        observed_at = before.get("observed_at") if unchanged and isinstance(before, dict) else None
+        windows[key] = {
+            **values,
+            "observed_at": observed_at if isinstance(observed_at, (int, float)) else captured_at,
+        }
+    if not windows:
+        return None
+    version = payload.get("version")
+    if isinstance(version, str) and 0 < len(version) <= _MAX_VERSION_CHARS:
+        windows["claude_code_version"] = version
+    elif isinstance(known.get("claude_code_version"), str):
+        windows["claude_code_version"] = known["claude_code_version"]
+    return windows
+
+
+def _rate_limit_values(window: object) -> dict[str, object] | None:
+    """Return a window's valid fields, or ``None`` when it reports none."""
+    if not isinstance(window, dict):
+        return None
+    used = window.get("used_percentage")
+    resets = window.get("resets_at")
+    used_ok = (
+        isinstance(used, (int, float))
+        and not isinstance(used, bool)
+        and math.isfinite(used)
+        and used >= 0
+    )
+    resets_ok = (
+        isinstance(resets, (int, float))
+        and not isinstance(resets, bool)
+        and math.isfinite(resets)
+        and resets > 0
+    )
+    if not used_ok and not resets_ok:
+        return None
+    return {
+        "used_percentage": float(used) if used_ok else None,
+        "resets_at": int(resets) if resets_ok else None,
+    }
+
+
+def read_rate_limits(bridge_dir: Path) -> dict[str, object] | None:
+    """
+    Read the quota block from ``context.json``, independent of context.
+
+    :param bridge_dir: Bridge directory shared with the statusLine shim.
+    :returns: The ``rate_limits`` block, or ``None`` when absent/unreadable.
+    """
+    rate_limits = (_read_record(bridge_dir) or {}).get("rate_limits")
+    return rate_limits if isinstance(rate_limits, dict) else None
+
+
+def _read_record(bridge_dir: Path) -> dict[str, object] | None:
+    try:
+        parsed = json.loads((bridge_dir / _CONTEXT_FILE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _context_record(payload: dict[str, object]) -> dict[str, object] | None:
+    """Context, cost, model and version fields, when ``context_window`` is usable."""
     context = payload.get("context_window")
     if not isinstance(context, dict):
         return None
@@ -108,7 +239,9 @@ def sync_raw_status_context(
         return last_sig
     if not isinstance(payload, dict):
         return sig
-    record = normalize_status_payload(payload)
+    # The shim wrote this render at the file's mtime; a quota window that
+    # changed is stamped with that capture time, not with this poll.
+    record = normalize_status_payload(payload, _read_record(bridge_dir), stat.st_mtime_ns / 1e9)
     if record is not None:
         _write_record_atomic(bridge_dir, record)
     return sig
@@ -167,7 +300,7 @@ def _write_context_atomic(bridge_dir: Path, payload: dict[str, object]) -> None:
     :param bridge_dir: Bridge directory shared with the forwarder.
     :param payload: Decoded statusLine stdin JSON.
     """
-    record = normalize_status_payload(payload)
+    record = normalize_status_payload(payload, _read_record(bridge_dir))
     if record is None:
         return
     try:
