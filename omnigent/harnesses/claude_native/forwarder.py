@@ -54,7 +54,10 @@ from omnigent.harnesses.claude_native.bridge import (
 )
 from omnigent.harnesses.claude_native.diagnostics import ClaudeDebugLogFollower
 from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS_FILE
-from omnigent.harnesses.claude_native.status import sync_raw_status_context
+from omnigent.harnesses.claude_native.status import (
+    read_rate_limits,
+    sync_raw_status_context,
+)
 from omnigent.inner.hook_scripts.subagent_router import AGENT_TOOL_NAMES
 from omnigent.models.model_metadata import concrete_reported_model
 from omnigent.native._native_post_delivery import (
@@ -882,6 +885,9 @@ class _ForwardDedupeState:
 
     usage: dict[str, float] | None = None
     context_window: int | None = None
+    # Last statusLine ``rate_limits`` block POSTed; each window carries the
+    # time its values last changed, so an unchanged block is never re-sent.
+    rate_limits: dict[str, object] | None = None
     recorded_token_usage: dict[str, int] | None = None
     observed_model: str | None = None
     posted_model: str | None = None
@@ -1528,6 +1534,12 @@ async def forward_claude_transcript_to_session(
                     # Normalize the statusLine shim's raw capture into
                     # context.json (one stat when nothing changed).
                     status_raw_sig = sync_raw_status_context(bridge_dir, status_raw_sig)
+                    await _forward_rate_limits(
+                        client,
+                        session_id=current_session_id,
+                        bridge_dir=bridge_dir,
+                        dedupe=dedupe,
+                    )
                     transcript_path = read_transcript_path(bridge_dir)
                     _observe_transcript_discovery(
                         bridge_dir=bridge_dir,
@@ -6010,6 +6022,42 @@ async def _forward_available_deltas(
     return updated
 
 
+async def _forward_rate_limits(
+    client: httpx.AsyncClient,
+    *,
+    session_id: str,
+    bridge_dir: Path,
+    dedupe: _ForwardDedupeState,
+) -> None:
+    """
+    Post the statusLine's plan ``rate_limits`` when they changed.
+
+    Best-effort and bounded by the client's timeouts: a failed post is
+    retried on the next poll, and nothing here blocks Claude's statusLine.
+
+    :param client: Omnigent HTTP client.
+    :param session_id: Omnigent session/conversation id.
+    :param bridge_dir: Bridge directory holding ``context.json``.
+    :param dedupe: Per-session dedupe state; updated after a successful post.
+    """
+    rate_limits = await asyncio.to_thread(read_rate_limits, bridge_dir)
+    if rate_limits is None or rate_limits == dedupe.rate_limits:
+        return
+    try:
+        await _post_external_session_usage(
+            client, session_id=session_id, usage=None, rate_limits=rate_limits
+        )
+    except httpx.HTTPError as exc:
+        _logger.warning(
+            "Failed to forward Claude rate limits; session=%s http_status=%s",
+            session_id,
+            _http_status_for_log(exc),
+            extra={"session_id": session_id},
+        )
+        return
+    dedupe.rate_limits = rate_limits
+
+
 async def _post_external_session_usage(
     client: httpx.AsyncClient,
     *,
@@ -6017,6 +6065,7 @@ async def _post_external_session_usage(
     usage: Mapping[str, float | str] | None,
     context_window: int | None = None,
     token_usage: dict[str, int] | None = None,
+    rate_limits: Mapping[str, object] | None = None,
 ) -> None:
     """
     Post one ``external_session_usage`` event to the Sessions API.
@@ -6036,6 +6085,9 @@ async def _post_external_session_usage(
         "output_tokens": 847}``. ``None`` records no token attributes. Pass
         only counts not already recorded — a backend that sums usage across
         spans double-counts a repeated figure.
+    :param rate_limits: The statusLine's plan quota block from
+        :func:`omnigent.harnesses.claude_native.status.normalize_rate_limits`,
+        or ``None`` to leave it out.
     :raises httpx.HTTPError: If the Omnigent request fails or is rejected.
     """
     payload: dict[str, object] = {}
@@ -6043,6 +6095,8 @@ async def _post_external_session_usage(
         payload.update(usage)
     if context_window is not None:
         payload["context_window"] = context_window
+    if rate_limits is not None:
+        payload["rate_limits"] = dict(rate_limits)
     if not payload:
         return
     from omnigent.runtime import telemetry

@@ -697,3 +697,62 @@ async def test_forward_session_cost_tags_display_advance_with_model(
         estimate_box["value"] = 0.90
         await run()
         assert posted[-1] == {"policy_cost_usd": pytest.approx(0.90)}
+
+
+@pytest.mark.asyncio
+async def test_forward_rate_limits_posts_only_changed_quota(tmp_path: Path) -> None:
+    """
+    StatusLine plan quota is posted once per change, without context fields.
+
+    Claude Code re-renders cached rate limits on every statusLine tick; the
+    forwarder must not resend them, and a failed post retries next poll.
+    """
+    from omnigent.harnesses.claude_native.status import normalize_status_payload
+
+    posts: list[dict[str, Any]] = []
+    failing = {"value": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if failing["value"]:
+            return httpx.Response(503, json={})
+        posts.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": False})
+
+    record = normalize_status_payload(
+        {
+            "version": "2.1.281",
+            "rate_limits": {"seven_day": {"used_percentage": 42, "resets_at": 1795000000}},
+        },
+        None,
+        1_700_000_000.0,
+    )
+    (tmp_path / "context.json").write_text(json.dumps(record), encoding="utf-8")
+    dedupe = forwarder._ForwardDedupeState()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://omnigent.test"
+    ) as client:
+        await forwarder._forward_rate_limits(
+            client, session_id="conv_1", bridge_dir=tmp_path, dedupe=dedupe
+        )
+        assert posts == [] and dedupe.rate_limits is None
+        failing["value"] = False
+        for _ in range(3):
+            await forwarder._forward_rate_limits(
+                client, session_id="conv_1", bridge_dir=tmp_path, dedupe=dedupe
+            )
+
+    assert posts == [
+        {
+            "type": "external_session_usage",
+            "data": {
+                "rate_limits": {
+                    "seven_day": {
+                        "used_percentage": 42.0,
+                        "resets_at": 1795000000,
+                        "observed_at": 1_700_000_000.0,
+                    },
+                    "claude_code_version": "2.1.281",
+                }
+            },
+        }
+    ]
