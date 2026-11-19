@@ -18,6 +18,7 @@ from omnigent.server.routes._session_harness_readiness import validate_process_h
         "relative",
         "user_agent",
         "non_admin",
+        "listed_admin",
         "old_host",
         "offline",
         "child",
@@ -37,8 +38,11 @@ async def test_process_home_admission(case, monkeypatch):
         )
     )
     permissions = Mock()
-    permissions.is_admin.return_value = case != "non_admin"
+    permissions.is_admin.return_value = case not in {"non_admin", "listed_admin"}
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(host_registry=registry)))
+    admin_list = Mock()
+    admin_list.is_admin.return_value = case == "listed_admin"
+    request.app.state.admin_list = admin_list
     args = {
         "request": request,
         "user_id": "operator@example.test",
@@ -50,7 +54,7 @@ async def test_process_home_admission(case, monkeypatch):
         "child": case == "child",
     }
     path = "relative" if case == "relative" else "/not/on/server/private"
-    if case == "valid":
+    if case in {"valid", "listed_admin"}:
         await validate_process_home_selection(path, **args)
     else:
         with pytest.raises(OmnigentError):
@@ -58,8 +62,16 @@ async def test_process_home_admission(case, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_harness,override,allowed",
+    [
+        ("claude-native", None, True),
+        ("claude-native", "codex-native", False),
+        ("codex-native", "claude-native", True),
+    ],
+)
 async def test_process_home_http_create_read_fork_and_patch(
-    client, app, db_uri, tmp_path, monkeypatch
+    client, app, db_uri, tmp_path, monkeypatch, base_harness, override, allowed
 ):
     from omnigent.host.frames import HOST_CAPABILITIES, HostHelloFrame
     from omnigent.server.host_registry import HostRegistry
@@ -74,7 +86,7 @@ async def test_process_home_http_create_read_fork_and_patch(
         bundle_key,
         build_agent_bundle(
             "private-home-agent",
-            executor={"type": "omnigent", "config": {"harness": "claude-native"}},
+            executor={"type": "omnigent", "config": {"harness": base_harness}},
         ),
     )
     SqlAlchemyAgentStore(db_uri).create(agent_id, "private-home-agent", bundle_key)
@@ -100,15 +112,16 @@ async def test_process_home_http_create_read_fork_and_patch(
             "agent_id": agent_id,
             "host_id": host_id,
             "workspace": "/workspace",
-            "process_home": "/private/source",
+            "process_home": "/private/source" if allowed else None,
+            "harness_override": override,
         },
     )
     assert response.status_code == 201, response.text
     session_id = response.json()["id"]
-    assert response.json()["process_home"] == "/private/source"
-    assert (await client.get(f"/v1/sessions/{session_id}")).json()[
-        "process_home"
-    ] == "/private/source"
+    assert response.json()["process_home"] == ("/private/source" if allowed else None)
+    assert (await client.get(f"/v1/sessions/{session_id}")).json()["process_home"] == (
+        "/private/source" if allowed else None
+    )
     changed = await client.patch(
         f"/v1/sessions/{session_id}", json={"process_home": "/private/changed"}
     )
@@ -122,11 +135,15 @@ async def test_process_home_http_create_read_fork_and_patch(
         f"/v1/sessions/{session_id}/fork",
         json={"process_home": "/private/fork", "host_id": host_id},
     )
+    if not allowed:
+        assert forked.status_code == 400, forked.text
+        return
     assert forked.status_code == 201, forked.text
+    assert forked.json()["harness"] == "claude-native"
     assert forked.json()["process_home"] == "/private/fork"
-    assert (await client.get(f"/v1/sessions/{session_id}")).json()[
-        "process_home"
-    ] == "/private/source"
+    assert (await client.get(f"/v1/sessions/{session_id}")).json()["process_home"] == (
+        "/private/source" if allowed else None
+    )
 
 
 def test_uploaded_bundle_cannot_choose_runner_private_home():

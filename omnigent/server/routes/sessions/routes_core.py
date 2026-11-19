@@ -4474,25 +4474,6 @@ def register_core_routes(
                 conversation_store=conversation_store,
             )
         assert base_agent is not None
-        if body.process_home is not None:
-            from omnigent.server.routes._session_harness_readiness import (
-                validate_process_home_selection,
-            )
-            from omnigent.server.routes._sessions.orchestration import _create_resolved_harness
-
-            await validate_process_home_selection(
-                body.process_home,
-                request=request,
-                user_id=user_id,
-                permission_store=permission_store,
-                agent=base_agent,
-                harness=await asyncio.to_thread(
-                    _create_resolved_harness, base_agent, None, agent_cache
-                ),
-                host_id=body.host_id,
-                host_type=body.host_type,
-                child=body.side_chat,
-            )
 
         if source.inference_snapshot is not None and switching_agent:
             from omnigent.harness_aliases import canonicalize_harness
@@ -4573,6 +4554,29 @@ def register_core_routes(
         if switching_agent:
             copy_model_settings = source_agent is not None and await asyncio.to_thread(
                 _same_provider_family, source_agent, base_agent
+            )
+
+        if body.process_home is not None:
+            from omnigent.server.routes._session_harness_readiness import (
+                validate_process_home_selection,
+            )
+            from omnigent.server.routes._sessions.orchestration import _create_resolved_harness
+
+            await validate_process_home_selection(
+                body.process_home,
+                request=request,
+                user_id=user_id,
+                permission_store=permission_store,
+                agent=base_agent,
+                harness=await asyncio.to_thread(
+                    _create_resolved_harness,
+                    base_agent,
+                    source.harness_override if copy_model_settings else None,
+                    agent_cache,
+                ),
+                host_id=body.host_id,
+                host_type=body.host_type,
+                child=body.side_chat,
             )
 
         # Explicit run-config overrides from the fork dialog. Each field is

@@ -2502,6 +2502,7 @@ def create_app(
     from omnigent.server.admin_list import load_admin_list, promote_if_listed
 
     admin_list = load_admin_list(extra=frozenset(admins or ()))
+    app.state.admin_list = admin_list
     # Session-sharing policy, normalized to a per-request callable, plus a
     # ``sharing_mode_writable`` flag gating the admin ``PUT /v1/sharing``
     # endpoint.

@@ -150,7 +150,16 @@ async def validate_process_home_selection(
     except ValueError as exc:
         raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
     if permission_store is not None and not local_single_user_enabled():
-        if user_id is None or not await asyncio.to_thread(permission_store.is_admin, user_id):
+        admin_list = getattr(request.app.state, "admin_list", None)
+        flagged = user_id is not None and await asyncio.to_thread(
+            permission_store.is_admin, user_id
+        )
+        listed = (
+            user_id is not None
+            and admin_list is not None
+            and await asyncio.to_thread(admin_list.is_admin, user_id)
+        )
+        if not (flagged or listed):
             raise OmnigentError(
                 "process_home requires operator authority", code=ErrorCode.FORBIDDEN
             )
