@@ -287,6 +287,11 @@ def resolve_host_launch(
         if not allowed:
             raise HTTPException(status_code=404, detail="session not found")
 
+    if conv.process_home is not None:
+        from omnigent.server.routes._session_harness_readiness import require_process_home_host
+
+        require_process_home_host(host_id, host_registry)
+
     if sandbox_profiles is not None:
         sandbox_profiles.require_session_host(
             session_id,

@@ -8287,8 +8287,13 @@ def _claude_terminal_pre_wrapper_env(spec: TerminalEnvSpec) -> dict[str, str]:
     :param spec: The Claude terminal launch spec.
     :returns: The pre-wrapper environment, e.g. ``{"HOME": "/home/user"}``.
     """
+    from omnigent.inner.datamodel import OSEnvSpec
+
     return terminal_pane_environment(
-        inherit_env=spec.inherit_env, env=spec.env, env_unset=spec.env_unset
+        inherit_env=spec.inherit_env,
+        env=spec.env,
+        env_unset=spec.env_unset,
+        process_home=spec.os_env.process_home if isinstance(spec.os_env, OSEnvSpec) else None,
     )
 
 
@@ -8306,6 +8311,8 @@ def _claude_terminal_launch_env(spec: TerminalEnvSpec) -> dict[str, str]:
     :returns: The effective environment, e.g.
         ``{"HOME": "/home/user", "CLAUDE_CONFIG_DIR": "/srv/claude"}``.
     """
+    from omnigent.inner.datamodel import OSEnvSpec
+
     env = _claude_terminal_pre_wrapper_env(spec)
     wrapper = env_wrapper_environment(spec.command or "", list(spec.args), env)
     if wrapper is None and Path(spec.command or "").name == "env":
@@ -8319,6 +8326,11 @@ def _claude_terminal_launch_env(spec: TerminalEnvSpec) -> dict[str, str]:
         for key in wrapper.unset:
             env.pop(key, None)
         env.update(wrapper.variables)
+    if isinstance(spec.os_env, OSEnvSpec) and spec.os_env.process_home is not None:
+        if env.get("HOME") != spec.os_env.process_home or (
+            wrapper is None and Path(spec.command or "").name == "env"
+        ):
+            raise ValueError("Claude wrapper conflicts with os_env.process_home")
     return env
 
 
@@ -9887,6 +9899,7 @@ async def _auto_create_claude_terminal(
             type="caller_process",
             cwd=workspace,
             sandbox=(agent_os_env.sandbox if agent_os_env is not None else None),
+            process_home=(agent_os_env.process_home if agent_os_env is not None else None),
         ),
         command=launch_command,
         args=launch_args,

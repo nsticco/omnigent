@@ -1587,6 +1587,7 @@ def _build_session_response(
         last_task_error=last_task_error,
         external_session_id=conv.external_session_id,
         terminal_launch_args=conv.terminal_launch_args,
+        process_home=conv.process_home,
         # Replay outstanding approval prompts into the snapshot.
         # The live SSE stream has no buffer, so a prompt emitted
         # before the user opened this chat would otherwise never
@@ -12226,6 +12227,19 @@ async def _create_session_from_existing_agent(
         labels=body.labels,
         host_registry=getattr(request.app.state, "host_registry", None),
     )
+    from omnigent.server.routes._session_harness_readiness import validate_process_home_selection
+
+    await validate_process_home_selection(
+        body.process_home,
+        request=request,
+        user_id=user_id,
+        permission_store=permission_store,
+        agent=agent,
+        harness=selected_harness,
+        host_id=body.host_id,
+        host_type=body.host_type,
+        child=bool(body.parent_session_id or body.sub_agent_name),
+    )
 
     # Git worktree options (optional). Two modes on body.git:
     #  - create (default): make a worktree; it becomes the stored
@@ -12429,6 +12443,7 @@ async def _create_session_from_existing_agent(
                 "cost_control_mode_override": cost_control_mode_override,
                 "subagent_routing_override": subagent_routing_override,
                 "harness_override": harness_override,
+                "process_home": body.process_home,
             }
         )
         with creation_stage("create_persistence_ms"):
@@ -12443,6 +12458,7 @@ async def _create_session_from_existing_agent(
                 workspace=canonical_workspace,
                 git_branch=git_branch,
                 terminal_launch_args=validated_launch_args,
+                process_home=body.process_home,
                 project_id=project_id,
                 labels=initial_labels or None,
                 model_override=model_override,

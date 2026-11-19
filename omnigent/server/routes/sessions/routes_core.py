@@ -4474,6 +4474,25 @@ def register_core_routes(
                 conversation_store=conversation_store,
             )
         assert base_agent is not None
+        if body.process_home is not None:
+            from omnigent.server.routes._session_harness_readiness import (
+                validate_process_home_selection,
+            )
+            from omnigent.server.routes._sessions.orchestration import _create_resolved_harness
+
+            await validate_process_home_selection(
+                body.process_home,
+                request=request,
+                user_id=user_id,
+                permission_store=permission_store,
+                agent=base_agent,
+                harness=await asyncio.to_thread(
+                    _create_resolved_harness, base_agent, None, agent_cache
+                ),
+                host_id=body.host_id,
+                host_type=body.host_type,
+                child=body.side_chat,
+            )
 
         if source.inference_snapshot is not None and switching_agent:
             from omnigent.harness_aliases import canonicalize_harness
@@ -4845,7 +4864,7 @@ def register_core_routes(
                     sizes=[stored.bytes for stored in filesystem_sources],
                 )
 
-        if body.host_id is not None:
+        if body.host_type == "managed" and body.host_id is not None:
             await _check_requested_host_id(request, body.host_id, user_id)
 
         if validate_only:
@@ -4892,6 +4911,7 @@ def register_core_routes(
                 override_reasoning_effort_set=effort_set,
                 override_terminal_launch_args=override_launch_args,
                 override_terminal_launch_args_set=launch_args_set,
+                process_home=body.process_home,
                 dropped_label_keys=dropped_label_keys,
                 extra_labels=extra_labels,
                 # Launch flags are CLI-specific. On an agent switch the fork may

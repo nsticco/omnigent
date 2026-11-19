@@ -1813,3 +1813,153 @@ def test_claude_terminal_env_keeps_a_user_api_timeout(
         assert terminal_env["API_TIMEOUT_MS"] == "600000"
     else:
         assert "API_TIMEOUT_MS" not in terminal_env
+
+
+def test_claude_process_home_matches_helper_without_moving_credentials_or_runner(
+    tmp_path, monkeypatch
+):
+    from omnigent.harnesses.claude_native.bridge import claude_global_config_path
+    from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec, TerminalEnvSpec
+    from omnigent.inner.os_env import create_os_environment
+    from omnigent.inner.terminal import terminal_pane_environment
+    from omnigent.runner.native import orchestration
+
+    runner_home = tmp_path / "runner"
+    runner_home.mkdir(mode=0o700)
+    credentials = runner_home / ".claude"
+    credentials.mkdir()
+    credential_file = credentials / ".credentials.json"
+    credential_file.write_bytes(b"enrolled credential sentinel")
+    monkeypatch.setenv("HOME", str(runner_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(credentials))
+    home = tmp_path / "session"
+    home.mkdir(mode=0o700)
+    os_spec = OSEnvSpec(process_home=str(home), sandbox=OSEnvSandboxSpec(type="none"))
+    terminal = TerminalEnvSpec(command="claude", os_env=os_spec)
+    launch_env = orchestration._claude_terminal_launch_env(terminal)
+    pane_env = terminal_pane_environment(
+        inherit_env=True, env={}, env_unset=[], process_home=os_spec.process_home
+    )
+    assert launch_env == pane_env
+    assert launch_env["HOME"] == str(home)
+    assert claude_global_config_path(env=launch_env).parent == credentials
+    environment = create_os_environment(os_spec)
+    try:
+        assert (
+            asyncio.run(environment.shell('printf "%s" "$HOME"'))["stdout"] == launch_env["HOME"]
+        )
+    finally:
+        environment.close()
+    assert os.environ["HOME"] == str(runner_home)
+    assert credential_file.read_bytes() == b"enrolled credential sentinel"
+    assert home.is_dir()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["HOME=/other", "claude"], ["-u", "HOME", "claude"], ["-i", "claude"], ["-v", "claude"]],
+)
+def test_claude_process_home_rejects_conflicting_wrapper(tmp_path, args):
+    from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
+    from omnigent.runner.native import orchestration
+
+    with pytest.raises(ValueError, match="process_home"):
+        orchestration._claude_terminal_launch_env(
+            TerminalEnvSpec(command="env", args=args, os_env=OSEnvSpec(process_home=str(tmp_path)))
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_home_session_init_recovery_uses_same_home_for_claude_and_tools(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock, Mock
+
+    from omnigent.entities import Conversation
+    from omnigent.entities.session_resources import SessionResourceView
+    from omnigent.harnesses.claude_native import diagnostics
+    from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
+    from omnigent.inner.os_env import create_os_environment
+    from omnigent.runner import create_runner_app
+    from omnigent.runner.native import orchestration
+    from omnigent.runner.session_init_protocol import build_runner_session_init_payload
+    from omnigent.spec.types import AgentSpec, ExecutorSpec
+    from tests.runner.conftest import _FakeProcessManager, _runner_client, _ScriptedHarnessClient
+    from tests.runner.helpers import NullServerClient
+
+    monkeypatch.setattr("omnigent.inference_config.load_runtime_inference_config", dict)
+    monkeypatch.setattr("omnigent.config.load_effective_config", dict)
+    monkeypatch.setattr(orchestration, "resolve_cli_binary", lambda _: None)
+    monkeypatch.setattr(diagnostics, "ClaudeDebugLogFollower", lambda _: Mock())
+    runner_home = tmp_path / "runner"
+    runner_home.mkdir(mode=0o700)
+    canonical_credentials = runner_home / ".claude"
+    canonical_credentials.mkdir()
+    monkeypatch.setenv("HOME", str(runner_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(canonical_credentials))
+    registered = AgentSpec(
+        spec_version=1,
+        name="private-agent",
+        executor=ExecutorSpec(type="omnigent", config={"harness": "claude-native"}),
+        os_env=OSEnvSpec(sandbox=OSEnvSandboxSpec(type="none")),
+    )
+    resolver = AsyncMock(return_value=registered)
+    homes = [tmp_path / "one", tmp_path / "two"]
+    for home in homes:
+        home.mkdir(mode=0o700)
+        (home / "instructions.md").write_text(home.name)
+    # Recreate the entire runner for cold recovery, with the same durable envelope.
+    for _ in range(2):
+        app = create_runner_app(
+            process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),
+            spec_resolver=resolver,
+            server_client=NullServerClient(),
+        )
+        observed = []
+        registry = app.state.session_resource_registry
+
+        async def launch(*args, observed=observed, **kwargs):
+            terminal = kwargs["spec"]
+            env = orchestration._claude_terminal_launch_env(terminal)
+            cli = subprocess.run(
+                ["/bin/sh", "-c", 'printf "%s\\n" "$HOME"; cat "$HOME/instructions.md"'],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            helper = create_os_environment(terminal.os_env)
+            try:
+                tool = await helper.shell('printf "%s\\n" "$HOME"; cat "$HOME/instructions.md"')
+            finally:
+                helper.close()
+            assert tool["stdout"] == cli.stdout
+            assert env["CLAUDE_CONFIG_DIR"] == str(canonical_credentials)
+            observed.append(cli.stdout)
+            return SessionResourceView(
+                id="terminal_claude_main",
+                type="terminal",
+                session_id=kwargs.get("session_id", args[0] if args else "session"),
+                name="claude",
+            )
+
+        monkeypatch.setattr(registry, "launch_required_terminal", launch)
+        async with _runner_client(app) as client:
+            for index, home in enumerate(homes):
+                conv = Conversation(
+                    id=f"home_session_{index}",
+                    created_at=1,
+                    updated_at=1,
+                    agent_id="private_agent",
+                    root_conversation_id=f"home_session_{index}",
+                    workspace=str(tmp_path),
+                    process_home=str(home),
+                )
+                payload = build_runner_session_init_payload(
+                    conv, server_version="test", suppress_recovery_turn=True
+                )
+                response = await client.post("/v1/sessions", json=payload)
+                assert response.status_code == 201, response.text
+            assert observed == [str(home) + "\n" + home.name for home in homes]
+        assert registered.os_env.process_home is None
+        assert os.environ["HOME"] == str(runner_home)

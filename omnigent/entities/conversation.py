@@ -314,6 +314,7 @@ class Conversation:
     task_summary: str | None = None
     external_session_id: str | None = None
     terminal_launch_args: list[str] | None = None
+    process_home: str | None = None
     workspace: str | None = None
     git_branch: str | None = None
     archived: bool = False

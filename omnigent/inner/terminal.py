@@ -50,6 +50,7 @@ from .os_env import (
     OSEnvironment,
     _copy_tree,
     create_os_environment,
+    process_home_environment,
 )
 from .sandbox import (
     SandboxPolicy,
@@ -749,6 +750,7 @@ def terminal_pane_environment(
     env: Mapping[str, str],
     env_unset: Iterable[str],
     launch_environment: Mapping[str, str] | None = None,
+    process_home: str | None = None,
 ) -> dict[str, str]:
     """
     Build the environment a terminal pane's command starts with.
@@ -776,6 +778,10 @@ def terminal_pane_environment(
     # Apply exclusions last so overrides cannot leak credentials to MCP servers.
     for key in env_unset:
         result.pop(key, None)
+    if process_home is not None:
+        if ("HOME" in env and env["HOME"] != process_home) or "HOME" in env_unset:
+            raise ValueError("terminal HOME overrides conflict with os_env.process_home")
+        result = process_home_environment(result, process_home)
     # Never reuse a parent's launch identity if diagnostic initialization fails.
     for key in (
         TERMINAL_INSTANCE_ID_ENV,
@@ -1655,6 +1661,7 @@ class TerminalInstance:
             env=self.env,
             env_unset=self.env_unset,
             launch_environment=launch_environment,
+            process_home=self.os_env.spec.process_home if self.os_env is not None else None,
         )
         if self._clipboard_bridge is not None:
             self._clipboard_bridge.prepare_environment(env)

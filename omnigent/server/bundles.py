@@ -92,9 +92,19 @@ def _reject_escaping_cwd(cwd: str | None) -> None:
 
 def _reject_uploaded_escaping_cwd(spec: AgentSpec) -> None:
     """Validate working directories in the agent, its terminals, and all sub-agents."""
+    if spec.os_env is not None and spec.os_env.process_home is not None:
+        raise OmnigentError(
+            "uploaded agent bundles cannot select a host process_home",
+            code=ErrorCode.INVALID_INPUT,
+        )
     _reject_escaping_cwd(spec.os_env.cwd if spec.os_env is not None else None)
     for terminal in (spec.terminals or {}).values():
         if isinstance(terminal.os_env, OSEnvSpec):
+            if terminal.os_env.process_home is not None:
+                raise OmnigentError(
+                    "uploaded agent bundles cannot select a host process_home",
+                    code=ErrorCode.INVALID_INPUT,
+                )
             _reject_escaping_cwd(terminal.os_env.cwd)
     for sub in spec.sub_agents:
         _reject_uploaded_escaping_cwd(sub)

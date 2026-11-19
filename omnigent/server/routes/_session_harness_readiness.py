@@ -17,7 +17,11 @@ from omnigent.stores.host_store import HostStore
 from omnigent.util.tmux_compat import MIN_TMUX_VERSION_HINT
 
 if TYPE_CHECKING:
+    from fastapi import Request
+
+    from omnigent.entities import Agent
     from omnigent.server.host_registry import HostRegistry
+    from omnigent.stores.permission_store import PermissionStore
 
 
 async def validate_create_harness_readiness(
@@ -109,3 +113,62 @@ def require_codex_plan_launch_support(
             "omnigent on the host and reconnect it, or turn Plan mode off, then try again.",
             code=ErrorCode.CONFLICT,
         )
+
+
+def require_process_home_host(host_id: str | None, host_registry: HostRegistry | None) -> None:
+    """Require positively advertised support, including after a session host rebind."""
+    from omnigent.host.frames import CAP_SESSION_PROCESS_HOME
+
+    connection = host_registry.get(host_id) if host_id and host_registry is not None else None
+    if connection is None or CAP_SESSION_PROCESS_HOME not in connection.hello.capabilities:
+        raise OmnigentError(
+            "The selected host does not support session process_home", code=ErrorCode.CONFLICT
+        )
+
+
+async def validate_process_home_selection(
+    process_home: str | None,
+    *,
+    request: Request,
+    user_id: str | None,
+    permission_store: PermissionStore | None,
+    agent: Agent,
+    harness: str | None,
+    host_id: str | None,
+    host_type: str,
+    child: bool = False,
+) -> None:
+    """Admit an operator-only private HOME without probing the server filesystem."""
+    if process_home is None:
+        return
+    from omnigent.inner.datamodel import OSEnvSpec
+    from omnigent.server.auth import local_single_user_enabled
+    from omnigent.server.routes._session_create_validation import _authorize_host_for_workspace
+
+    try:
+        OSEnvSpec(process_home=process_home)
+    except ValueError as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+    if permission_store is not None and not local_single_user_enabled():
+        if user_id is None or not await asyncio.to_thread(permission_store.is_admin, user_id):
+            raise OmnigentError(
+                "process_home requires operator authority", code=ErrorCode.FORBIDDEN
+            )
+    if (
+        not agent.operator_authored
+        or native_terminal_name(harness) != "claude"
+        or child
+        or host_type != "external"
+        or not host_id
+    ):
+        raise OmnigentError(
+            "process_home requires an operator-authored Claude agent on an explicit external host",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    await _authorize_host_for_workspace(
+        user_id=user_id,
+        host_id=host_id,
+        host_store=getattr(request.app.state, "host_store", None),
+        host_registry=getattr(request.app.state, "host_registry", None),
+    )
+    require_process_home_host(host_id, getattr(request.app.state, "host_registry", None))

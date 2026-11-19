@@ -10275,3 +10275,25 @@ def test_family_membership_is_independent_of_labels(conversation_store) -> None:
         source.id,
         sibling.id,
     }
+
+
+def test_process_home_persists_and_fork_requires_its_own_home(conversation_store):
+    from omnigent.runner.session_init_protocol import (
+        RunnerSessionInitEnvelope,
+        build_runner_session_init_payload,
+    )
+
+    source = conversation_store.create_conversation(
+        agent_id="a" * 32, process_home="/private/source"
+    )
+    restored = conversation_store.get_conversation(source.id)
+    assert restored.process_home == "/private/source"
+    payload = build_runner_session_init_payload(restored, server_version="test")
+    envelope = RunnerSessionInitEnvelope.model_validate(payload["session_init"])
+    assert envelope.snapshot.process_home == "/private/source"
+    fork = conversation_store.fork_conversation(source.id, process_home="/private/fork")
+    assert conversation_store.get_conversation(fork.id).process_home == "/private/fork"
+    ordinary_fork = conversation_store.fork_conversation(source.id)
+    assert conversation_store.get_conversation(ordinary_fork.id).process_home is None
+    conversation_store.update_conversation(source.id, model_override="model")
+    assert conversation_store.get_conversation(source.id).process_home == "/private/source"

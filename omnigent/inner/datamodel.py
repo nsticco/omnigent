@@ -820,6 +820,10 @@ class OSEnvSandboxSpec:
 class OSEnvSpec:
     """Configuration for an operating system environment.
 
+    :param process_home: Optional pre-provisioned private absolute HOME for session
+        tools and native Claude. Does not change runner state, credential lookup
+        variables, or sandbox grants. The directory must be owned, mode 0700,
+        and free of symlink components when launched.
     :param start_in_scratch: When ``True``, the helper starts
         inside the writable scratch tmpdir instead of cwd. The
         workspace remains bound read-only so the agent can reach
@@ -833,8 +837,20 @@ class OSEnvSpec:
     sandbox: OSEnvSandboxSpec | None = None
     fork: bool = False
     start_in_scratch: bool = False
+    process_home: str | None = None
 
     def __post_init__(self) -> None:
+        if self.process_home is not None:
+            home = self.process_home
+            if (
+                not isinstance(home, str)
+                or "\x00" in home
+                or not Path(home).is_absolute()
+                or str(Path(home)) != home
+                or ".." in Path(home).parts
+                or Path(home).parent == Path(home)
+            ):
+                raise ValueError("os_env.process_home must be a canonical absolute directory path")
         if (
             self.fork
             and self.sandbox is not None

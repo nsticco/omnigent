@@ -317,6 +317,7 @@ class ServerInfoResponse(BaseModel):
     request_managed_sandbox_host_id: bool = True
     # A managed fork accepts ``workspaces``; older servers reject the field.
     session_fork_workspaces: bool = True
+    session_process_home: bool = True
     # A multipart create's metadata accepts ``model_override``; older servers
     # reject it.
     session_bundle_model_override: bool = True
@@ -3732,6 +3733,7 @@ def create_app(
                 "sibling_sessions": frontend_features[Feature.SIBLING_SESSIONS.value],
                 "request_managed_sandbox_host_id": True,
                 "session_fork_workspaces": True,
+                "session_process_home": True,
                 "session_bundle_model_override": True,
                 "agent_install": agent_store.supports_user_agents,
                 "agent_detail": True,

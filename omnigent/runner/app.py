@@ -623,6 +623,7 @@ class _SessionSnapshot:
     parent_session_id: str | None = None
     agent_name: str | None = None
     wrapper_label: str | None = None
+    process_home: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1292,6 +1293,43 @@ def create_runner_app(
         Sub-agent panes are capped at the native-pane default window.
     """
     import hmac
+
+    if spec_resolver is not None:
+        original_spec_resolver = spec_resolver
+
+        async def session_spec_resolver(
+            agent_id: str, session_id: str | None
+        ) -> _SpecEntry | None:
+            entry = await original_spec_resolver(agent_id, session_id)
+            if session_id is None:
+                return entry
+            snapshot = await _session_snapshot(session_id)
+            if not snapshot.ok:
+                raise RuntimeError(
+                    "Cannot resolve session process environment without its snapshot"
+                )
+            if snapshot.process_home is None:
+                return entry
+            from omnigent.inner.datamodel import OSEnvSpec
+            from omnigent.inner.os_env import process_home_environment
+
+            process_home_environment({}, snapshot.process_home)
+            spec = _unwrap_spec_entry(entry)
+            if spec is None:
+                raise ValueError("process_home requires a resolved session agent")
+            private_spec = dataclasses.replace(
+                spec,
+                os_env=dataclasses.replace(
+                    spec.os_env or OSEnvSpec(), process_home=snapshot.process_home
+                ),
+            )
+            return (
+                dataclasses.replace(entry, spec=private_spec)
+                if isinstance(entry, ResolvedSpec)
+                else private_spec
+            )
+
+        spec_resolver = session_spec_resolver
 
     app = FastAPI(title="omnigent-runner")
 
@@ -2366,6 +2404,7 @@ def create_runner_app(
             parent_session_id: str | None = None
             agent_name: str | None = None
             wrapper_label: str | None = None
+            process_home: str | None = None
             try:
                 resp = await server_client.get(
                     f"/v1/sessions/{session_id}", params=_SESSION_METADATA_PARAMS
@@ -2390,8 +2429,9 @@ def create_runner_app(
                     if isinstance(raw_agent_name, str) and raw_agent_name:
                         agent_name = raw_agent_name
                     wrapper_label = wrapper_label_from_labels(body.get("labels"))
+                    process_home = body.get("process_home")
             except Exception:  # noqa: BLE001 — best-effort; created_at falls back to wall time
-                pass
+                status_code = None
             snapshot = _SessionSnapshot(
                 ok=status_code == 200,
                 status_code=status_code,
@@ -2402,6 +2442,7 @@ def create_runner_app(
                 parent_session_id=parent_session_id,
                 agent_name=agent_name,
                 wrapper_label=wrapper_label,
+                process_home=process_home,
             )
             if snapshot.ok and snapshot.agent_id is not None:
                 if _session_cache_generation_is_current(session_id, generation):
@@ -2489,6 +2530,7 @@ def create_runner_app(
             sub_agent_name=envelope.sub_agent_name,
             parent_session_id=snapshot.parent_session_id,
             wrapper_label=wrapper_label_from_labels(snapshot.labels),
+            process_home=snapshot.process_home,
         )
         _session_start_cache[session_id] = float(snapshot.created_at)
         _session_workspace_cache[session_id] = snapshot.workspace

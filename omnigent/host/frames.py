@@ -79,6 +79,7 @@ CAP_CODEX_SIDE_CHAT = "codex_side_chat"
 # The runner starts a codex-native session whose collaboration-mode label is
 # ``plan`` (armed on the New Session screen) in Codex Plan mode:
 CAP_CODEX_PLAN_AT_LAUNCH = "codex_plan_at_launch"
+CAP_SESSION_PROCESS_HOME = "session_process_home"
 # The host answers ``host.mcp_servers`` with its user-level MCP inventory:
 CAP_MCP_INVENTORY = "mcp_inventory"
 CAP_HARNESS_STARTUP = "harness_startup"
@@ -97,6 +98,7 @@ CAP_WORKTREE_CREATE_BUDGET = "worktree_create_budget"
 HOST_CAPABILITIES: list[str] = [
     CAP_CODEX_SIDE_CHAT,
     CAP_CODEX_PLAN_AT_LAUNCH,
+    CAP_SESSION_PROCESS_HOME,
     CAP_FILESYSTEM_ATTACHMENTS,
     CAP_FILESYSTEM_ATTACHMENT_DELIVERY,
     CAP_PLUGINS,

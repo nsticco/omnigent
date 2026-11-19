@@ -321,6 +321,25 @@ def _write_credential_proxy_files(
             env[spec.env_var] = str(path)
 
 
+def process_home_environment(env: Mapping[str, str], process_home: str | None) -> dict[str, str]:
+    """Apply an already provisioned private HOME without changing runner state or grants."""
+    result = dict(env)
+    if process_home is None:
+        return result
+    OSEnvSpec(process_home=process_home)
+    home = Path(process_home)
+    for component in (home, *home.parents):
+        if component.is_symlink():
+            raise ValueError("os_env.process_home cannot traverse symlinks")
+    info = home.stat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError("os_env.process_home must be an existing directory")
+    if os.name != "posix" or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("os_env.process_home requires an owned mode 0700 directory")
+    result["HOME"] = process_home
+    return result
+
+
 @dataclass
 class OSEnvironment(ABC):
     """Base OS environment interface."""
@@ -412,8 +431,10 @@ class _HelperProcessClient:
         egress_rules: list[str] | None = None,
         egress_allow_private_destinations: bool = False,
         copy_on_write_environment: CopyOnWriteEnvironment | None = None,
+        process_home: str | None = None,
     ) -> None:
         self._copy_on_write_environment = copy_on_write_environment
+        self.process_home = process_home
         self.cwd = cwd
         self.shell_path = shell_path
         self.sandbox = sandbox
@@ -550,7 +571,7 @@ class _HelperProcessClient:
         sandbox = self.sandbox
         if self._copy_on_write_environment is not None:
             self._copy_on_write_environment.prepare(sandbox)
-        env = build_helper_env(os.environ, sandbox)
+        env = process_home_environment(build_helper_env(os.environ, sandbox), self.process_home)
         project_root = str(_project_root())
         existing_pythonpath = env.get("PYTHONPATH")
         env["PYTHONPATH"] = (
@@ -994,6 +1015,7 @@ class CallerProcessOSEnvironment(OSEnvironment):
             egress_rules=self._egress_rules,
             egress_allow_private_destinations=self._egress_allow_private_destinations,
             copy_on_write_environment=self._copy_on_write_environment,
+            process_home=self.spec.process_home,
         )
 
     async def read(
@@ -1124,6 +1146,7 @@ def create_os_environment(
     if spec.type != "caller_process":
         raise NotImplementedError(f"os_env type '{spec.type}' is not implemented")
 
+    process_home_environment({}, spec.process_home)
     cwd = Path(spec.cwd or os.getcwd()).resolve(strict=False)
     fork_dir: Path | None = None
     if spec.fork:

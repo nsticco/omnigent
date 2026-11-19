@@ -965,6 +965,7 @@ def _parse_os_env(
         sandbox=sandbox,
         fork=fork,
         start_in_scratch=start_in_scratch,
+        process_home=raw.get("process_home"),
     )
 
 

@@ -701,6 +701,20 @@ already uploaded or registered an agent. The response is the full
     base_branch?: string | null}`. `branch_name` is validated against
     git ref-format rules. See `designs/SESSION_GIT_WORKTREE.md`.
 
+  process_home (string or null, JSON create and fork only)
+    Optional pre-provisioned private POSIX HOME for session tools and native Claude.
+    Requires an operator-authored Claude agent, an external host owned by the caller,
+    and administrator authority (or explicit local single-user mode). The host must
+    advertise `session_process_home`; `GET /v1/info` reports server support under
+    the same name. The response and subsequent GET echo the admitted value.
+    The runner validates a canonical absolute path, existing directory, current-user
+    ownership, mode 0700, and no symlink components. The server does not access that
+    path. No sandbox grants or credential locations are changed, and the runner's
+    own HOME remains unchanged. Maximum 256 characters; the existing aggregate
+    session-override storage limit also applies. Immutable after creation: PATCH
+    rejects it. A fork must explicitly select its own HOME; it does not inherit
+    the source path. Uploaded bundles cannot select a host-private HOME.
+
   terminal_launch_args (array of strings or null)
     Optional pass-through CLI args for a native terminal wrapper
     (claude / codex), e.g. `["--permission-mode", "bypassPermissions"]`

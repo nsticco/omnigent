@@ -836,3 +836,87 @@ def test_close_stops_the_helper_and_releases_its_spawner_thread(
         assert not thread.is_alive()
     os_env.close()
     assert asyncio.run(os_env.shell("true")) == {"error": "OS environment helper is closed"}
+
+
+def test_private_process_home_survives_serialization_and_helper_restart(tmp_path, monkeypatch):
+    from dataclasses import asdict
+
+    from omnigent.inner.loader import _parse_os_env_spec
+    from omnigent.spec.parser import _parse_os_env
+
+    inherited = os.environ.get("HOME")
+    homes = [tmp_path / "first", tmp_path / "second"]
+    for home in homes:
+        home.mkdir(mode=0o700)
+        (home / "instructions.md").write_text(home.name)
+    for home in homes:
+        spec = _parse_os_env({"process_home": str(home), "sandbox": {"type": "none"}})
+        assert spec.process_home == str(home)
+        restored = _parse_os_env_spec(asdict(spec))
+        assert restored.process_home == str(home)
+        for _ in range(2):
+            environment = create_os_environment(restored)
+            try:
+                result = asyncio.run(
+                    environment.shell('printf "%s\\n" "$HOME"; cat "$HOME/instructions.md"')
+                )
+                assert result["stdout"] == str(home) + "\n" + home.name
+            finally:
+                environment.close()
+        assert os.environ.get("HOME") == inherited
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "relative",
+        "~/private",
+        "/",
+        "/tmp/../private",
+        "/tmp//private",
+        "/tmp/./private",
+        "/tmp/private/",
+        17,
+        "bad\x00path",
+    ],
+)
+def test_process_home_requires_literal_absolute_path(value):
+    with pytest.raises(ValueError, match="process_home"):
+        OSEnvSpec(process_home=value)
+
+
+@pytest.mark.parametrize("kind", ["missing", "file", "public", "symlink", "symlink_parent"])
+def test_process_home_refuses_unsafe_directory(tmp_path, kind):
+    from omnigent.inner.os_env import process_home_environment
+
+    home = tmp_path / "private"
+    if kind == "file":
+        home.write_text("not a directory")
+    elif kind == "public":
+        home.mkdir(mode=0o755)
+    elif kind in {"symlink", "symlink_parent"}:
+        target = tmp_path / "target"
+        target.mkdir(mode=0o700)
+        home.symlink_to(target, target_is_directory=True)
+        if kind == "symlink_parent":
+            home = home / "child"
+            home.mkdir(mode=0o700)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        process_home_environment({}, str(home))
+
+
+def test_process_home_revalidates_on_helper_restart(tmp_path):
+    home = tmp_path / "private"
+    home.mkdir(mode=0o700)
+    environment = create_os_environment(
+        OSEnvSpec(process_home=str(home), sandbox=OSEnvSandboxSpec(type="none"))
+    )
+    try:
+        assert asyncio.run(environment.shell('printf "%s" "$HOME"'))["stdout"] == str(home)
+        environment._helper._proc.kill()
+        environment._helper._proc.wait(timeout=5)
+        home.chmod(0o755)
+        with pytest.raises(ValueError, match="0700"):
+            asyncio.run(environment.shell('printf "%s" "$HOME"'))
+    finally:
+        environment.close()

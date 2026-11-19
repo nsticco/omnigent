@@ -1784,6 +1784,7 @@ class _SessionCreateRequestBase(_SandboxProfileSelection):
     workspaces: list[str] | None = None
     git: SessionGitOptions | None = None
     terminal_launch_args: list[str] | None = None
+    process_home: str | None = Field(default=None, max_length=256)
     model_override: str | None = None
     reasoning_effort: str | None = None
     cost_control_mode_override: str | None = None
@@ -2593,6 +2594,7 @@ class SessionResponse(BaseModel):
     last_task_error: dict[str, str] | None = None
     external_session_id: str | None = None
     terminal_launch_args: list[str] | None = None
+    process_home: str | None = Field(default=None, max_length=256)
     pending_elicitations: list[dict[str, Any]] = Field(default_factory=list)
     # Durable startup inputs plus ordinary native inputs awaiting a receipt.
     # Each {"pending_id", "content"} restores a pending bubble on reconnect.
@@ -3001,6 +3003,7 @@ class SessionForkRequest(_SandboxProfileSelection):
     model_override: str | None = None
     reasoning_effort: str | None = None
     terminal_launch_args: list[str] | None = None
+    process_home: str | None = Field(default=None, max_length=256)
     codex_bypass_sandbox: bool = False
     host_type: Literal["external", "managed"] = "external"
     sandbox_provider: str | None = None
@@ -3066,7 +3069,9 @@ class SessionForkRequest(_SandboxProfileSelection):
                         f"(optionally '#<branch>') for each workspace: {exc}"
                     ) from exc
             return self
-        if self.host_id is not None:
+        if self.process_home is not None and self.host_id is None:
+            raise ValueError("process_home on an external fork requires its destination host_id")
+        if self.host_id is not None and self.process_home is None:
             raise ValueError(
                 "host_id only applies to host_type 'managed' — an external "
                 "fork binds its host afterwards"

@@ -116,3 +116,38 @@ async def test_inference_mismatch_response_does_not_expose_exception_details(
     }
     assert "credential-sentinel" not in response.text
     assert manager.get_client_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["unavailable", "malformed"])
+async def test_session_environment_refuses_failed_snapshot_without_init_envelope(
+    monkeypatch, failure
+):
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from omnigent.spec.types import AgentSpec
+
+    monkeypatch.setattr("omnigent.inference_config.load_runtime_inference_config", dict)
+    resolver = AsyncMock(return_value=AgentSpec(spec_version=1, name="agent"))
+
+    def unavailable(request):
+        if failure == "malformed":
+            return httpx.Response(200, content="not-json")
+        return httpx.Response(503, json={"error": "unavailable"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(unavailable), base_url="http://server"
+    ) as server:
+        manager = _FakeProcessManager(_ScriptedHarnessClient([]))
+        app = create_runner_app(
+            process_manager=manager, spec_resolver=resolver, server_client=server
+        )
+        async with _runner_client(app) as client:
+            response = await client.post(
+                "/v1/sessions", json={"session_id": "session", "agent_id": "agent"}
+            )
+        assert response.status_code == 503, response.text
+        assert response.json()["error"] == "spec_resolver_failed"
+        assert manager.get_client_calls == []

@@ -322,6 +322,7 @@ def _to_conversation(
         cost_control_mode_override=overrides["cost_control_mode_override"],
         subagent_routing_override=overrides["subagent_routing_override"],
         harness_override=overrides["harness_override"],
+        process_home=overrides["process_home"],
         # Stored as ``"on"`` / absent; surfaced as a plain bool on the entity.
         share_workspace_files=overrides["share_workspace_files"] == "on",
         sub_agent_name=meta.sub_agent_name if meta else None,
@@ -1079,6 +1080,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         workspace: str | None = None,
         git_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
+        process_home: str | None = None,
         conversation_id: str | None = None,
         project_id: str | None = None,
         inference_snapshot: dict[str, Any] | None = None,
@@ -1169,6 +1171,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 "cost_control_mode_override": cost_control_mode_override,
                 "subagent_routing_override": subagent_routing_override,
                 "harness_override": harness_override,
+                "process_home": process_home,
             }
         )
         prepared_labels = _prepare_label_updates(labels) if labels else {}
@@ -5821,6 +5824,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         override_reasoning_effort_set: bool = False,
         override_terminal_launch_args: list[str] | None = None,
         override_terminal_launch_args_set: bool = False,
+        process_home: str | None = None,
         dropped_label_keys: frozenset[str] = frozenset(),
         extra_labels: dict[str, str] | None = None,
         carry_history_into_native: bool = False,
@@ -6012,6 +6016,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             override_reasoning_effort_set=override_reasoning_effort_set,
             override_terminal_launch_args=override_terminal_launch_args,
             override_terminal_launch_args_set=override_terminal_launch_args_set,
+            process_home=process_home,
             dropped_label_keys=dropped_label_keys,
             extra_labels=extra_labels,
             carry_history_into_native=carry_history_into_native,
@@ -6046,6 +6051,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         override_reasoning_effort_set: bool = False,
         override_terminal_launch_args: list[str] | None = None,
         override_terminal_launch_args_set: bool = False,
+        process_home: str | None = None,
         dropped_label_keys: frozenset[str] = frozenset(),
         extra_labels: dict[str, str] | None = None,
         carry_history_into_native: bool = False,
@@ -6119,6 +6125,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             fork_overrides = _encode_session_overrides(
                 {
                     "reasoning_effort": fork_effort,
+                    "process_home": process_home,
                     "model_override": fork_model,
                     "harness_override": (
                         source_overrides["harness_override"] if copy_model_settings else None
