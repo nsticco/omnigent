@@ -1,0 +1,115 @@
+name: Hook compatibility baseline diagnostic
+
+on:
+  push:
+    branches: [feat/profile-command-hooks]
+    paths: [.github/workflows/hook-compat-baseline.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    if: github.event.repository.fork == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        revision:
+          - label: base
+            sha: ed93f7d4f6649f1c9f38ced8b193a37e126e2815
+          - label: candidate
+            sha: 220e6ab049f0c2cd73c1df0afd5c389514554271
+        old_component: [server, runner]
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      ANTHROPIC_API_KEY: ""
+      OPENAI_API_KEY: ""
+      CODEX: ""
+      CLAUDE_CODE: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.revision.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - uses: ./.github/actions/setup-uv
+        with:
+          enable-cache: false
+      - name: Install test prerequisites without changing security settings
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
+          uv sync --locked --extra all --group test
+      - uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@c76912dd5f9cfe9e2e11572eae45ad657243232f
+        with:
+          harness: codex
+          enable-cache: false
+      - name: Build the same historical counterpart as the failed smoke jobs
+        env:
+          OLD_COMPONENT: ${{ matrix.old_component }}
+        run: |
+          set -euo pipefail
+          command -v codex
+          command -v tmux
+          codex --version
+          tmux -V
+          git rev-parse HEAD v0.8.2
+          src="$RUNNER_TEMP/old-src"
+          venv="$RUNNER_TEMP/old-env"
+          git worktree add --detach "$src" v0.8.2
+          uv venv --python 3.12 "$venv"
+          uv pip install --python "$venv/bin/python" \
+            -e "$src" -e "$src/sdks/python-client" -e "$src/sdks/ui"
+          "$venv/bin/omnigent" --version
+          component="${OLD_COMPONENT^^}"
+          echo "OMNIGENT_COMPAT_${component}_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
+          echo "OMNIGENT_COMPAT_${component}_VERSION=0.8.2" >> "$GITHUB_ENV"
+      # Do not continue-on-error: a reproduced failure stays a failed diagnostic.
+      # Original compatibility checks and their tag selection remain unchanged.
+      - name: Run the three unchanged regression scenarios
+        run: |
+          uv run --no-sync pytest \
+            tests/e2e/test_git_provider_compat_e2e.py \
+            tests/e2e/test_host_import_compat_e2e.py \
+            tests/e2e/test_codex_native_shell_followup_e2e.py::test_editor_bang_input_cannot_execute_through_an_older_server \
+            -v --tb=long --showlocals --log-level=INFO --reruns=0 \
+            --timeout=120 --timeout-method=thread \
+            --basetemp=/tmp/hook-compat-baseline \
+            --junitxml=/tmp/hook-compat-baseline/junit.xml
+      - name: Require three executed scenarios and record their outcomes
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('/tmp/hook-compat-baseline/junit.xml').getroot().findall('.//testcase')
+          expected = {
+              'test_github_resources_survive_mixed_versions_and_parked_runner',
+              'test_ten_mib_import_survives_mixed_server_and_host_versions',
+              'test_editor_bang_input_cannot_execute_through_an_older_server',
+          }
+          assert len(cases) == 3 and {case.attrib['name'] for case in cases} == expected
+          assert not any(case.find('skipped') is not None for case in cases), 'Skipped qualification'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              for case in cases:
+                  outcome = 'failed' if case.find('failure') is not None else 'error' if case.find('error') is not None else 'passed'
+                  summary.write(f"- {case.attrib['name']}: {outcome}\n")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: hook-compat-${{ matrix.revision.label }}-old-${{ matrix.old_component }}
+          path: |
+            /tmp/hook-compat-baseline/**/server.log
+            /tmp/hook-compat-baseline/**/runner.log
+            /tmp/hook-compat-baseline/junit.xml
+          retention-days: 7
+          if-no-files-found: error
