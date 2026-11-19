@@ -725,6 +725,7 @@ def _parse_executor_spec(
             auth=auth,
             context_files=context_files,
             system_prompt_mode=system_prompt_mode,
+            claude_command_hooks=data.get("claude_command_hooks"),
         )
     return None
 

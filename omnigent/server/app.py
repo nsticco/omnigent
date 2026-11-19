@@ -318,6 +318,7 @@ class ServerInfoResponse(BaseModel):
     # A managed fork accepts ``workspaces``; older servers reject the field.
     session_fork_workspaces: bool = True
     session_process_home: bool = True
+    claude_command_hooks: bool = True
     # A multipart create's metadata accepts ``model_override``; older servers
     # reject it.
     session_bundle_model_override: bool = True
@@ -2375,14 +2376,13 @@ def create_app(
                 transfer_from_host_id,
                 require_account_owner=runner_account_store is not None,
             )
-        from omnigent.host.frames import CAP_MCP_REGISTRY
-        from omnigent.server.mcp_compatibility import require_session_registry_mcp_support
+        from omnigent.server.mcp_compatibility import require_session_runtime_support
 
         connection = host_registry.get(host_id)
-        if connection is not None and CAP_MCP_REGISTRY not in connection.hello.capabilities:
+        if connection is not None:
             conv = conversation_store.get_conversation(session_id)
             if conv is not None:
-                require_session_registry_mcp_support(
+                require_session_runtime_support(
                     conv,
                     connection.hello.capabilities,
                     component="host",
@@ -3735,6 +3735,7 @@ def create_app(
                 "request_managed_sandbox_host_id": True,
                 "session_fork_workspaces": True,
                 "session_process_home": True,
+                "claude_command_hooks": True,
                 "session_bundle_model_override": True,
                 "agent_install": agent_store.supports_user_agents,
                 "agent_detail": True,
