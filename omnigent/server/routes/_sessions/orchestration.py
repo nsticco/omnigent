@@ -12223,16 +12223,22 @@ async def _create_session_from_existing_agent(
     )
     from omnigent.server.claude_hook_compatibility import require_hook_support
 
-    selected_host_registry = getattr(request.app.state, "host_registry", None)
-    selected_host = (
-        selected_host_registry.get(body.host_id)
-        if body.host_id and selected_host_registry
-        else None
-    )
+    if inherited_runner_id is not None:
+        selected_registry = getattr(request.app.state, "tunnel_registry", None)
+        selected_connection = (
+            selected_registry.get(inherited_runner_id) if selected_registry else None
+        )
+        selected_component = "inherited runner"
+    else:
+        selected_registry = getattr(request.app.state, "host_registry", None)
+        selected_connection = (
+            selected_registry.get(body.host_id) if body.host_id and selected_registry else None
+        )
+        selected_component = "selected host"
     require_hook_support(
         selection_spec,
-        selected_host.hello.capabilities if selected_host else (),
-        component="selected host",
+        selected_connection.hello.capabilities if selected_connection else (),
+        component=selected_component,
         operator_authored=agent.operator_authored,
         harness=selected_harness,
     )

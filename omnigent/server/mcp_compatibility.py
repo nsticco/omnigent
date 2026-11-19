@@ -61,8 +61,18 @@ def require_session_runtime_support(
     ).spec
     from omnigent.server.claude_hook_compatibility import require_hook_support
 
+    hook_spec = spec
+    if conversation.sub_agent_name:
+        from omnigent.runtime.workflow import _find_spec_by_name
+
+        hook_spec = _find_spec_by_name(spec, conversation.sub_agent_name)
+        if hook_spec is None:
+            raise OmnigentError(
+                "Cannot resolve the selected sub-agent for runtime admission",
+                code=ErrorCode.INVALID_INPUT,
+            )
     require_hook_support(
-        spec,
+        hook_spec,
         capabilities,
         component=component,
         operator_authored=agent.operator_authored,
