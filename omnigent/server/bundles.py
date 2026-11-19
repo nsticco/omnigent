@@ -92,6 +92,11 @@ def _reject_escaping_cwd(cwd: str | None) -> None:
 
 def _reject_uploaded_escaping_cwd(spec: AgentSpec) -> None:
     """Validate working directories in the agent, its terminals, and all sub-agents."""
+    if spec.executor.config.get("claude_command_hooks") is not None:
+        raise OmnigentError(
+            "Claude command hooks require an operator-authored agent bundle",
+            code=ErrorCode.INVALID_INPUT,
+        )
     if spec.os_env is not None and spec.os_env.process_home is not None:
         raise OmnigentError(
             "uploaded agent bundles cannot select a host process_home",

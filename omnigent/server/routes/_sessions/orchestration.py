@@ -12221,6 +12221,21 @@ async def _create_session_from_existing_agent(
         host_store=getattr(request.app.state, "host_store", None),
         parent=_parent_for_routing,
     )
+    from omnigent.server.claude_hook_compatibility import require_hook_support
+
+    selected_host_registry = getattr(request.app.state, "host_registry", None)
+    selected_host = (
+        selected_host_registry.get(body.host_id)
+        if body.host_id and selected_host_registry
+        else None
+    )
+    require_hook_support(
+        selection_spec,
+        selected_host.hello.capabilities if selected_host else (),
+        component="selected host",
+        operator_authored=agent.operator_authored,
+        harness=selected_harness,
+    )
     require_codex_plan_launch_support(
         harness=selected_harness,
         host_id=body.host_id,

@@ -2396,7 +2396,9 @@ def test_agent_os_env_from_spec_unwraps_resolved_and_handles_none() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("skills_filter", ["all", "none"])
 async def test_auto_create_claude_terminal_passes_startup_instructions(
+    skills_filter: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2413,6 +2415,8 @@ async def test_auto_create_claude_terminal_passes_startup_instructions(
     """
     monkeypatch.setattr(claude_native_bridge, "_TRUSTED_PARENT", tmp_path)
     monkeypatch.setattr(claude_native_bridge, "_BRIDGE_ROOT", tmp_path / "root")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_provider_resolution(monkeypatch, tmp_path / "config")
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://127.0.0.1:8000")
 
     monkeypatch.setattr(
@@ -2454,11 +2458,22 @@ async def test_auto_create_claude_terminal_passes_startup_instructions(
     )
 
     session_id = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+    authored = {
+        "PostToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": "printf authored", "timeout": 2}],
+            }
+        ]
+    }
     agent_spec = AgentSpec(
         spec_version=1,
         name="claude-agent",
         instructions="Be a concise, careful coding assistant.",
-        executor=ExecutorSpec(type="omnigent", config={"harness": "claude-native"}),
+        skills_filter=skills_filter,
+        executor=ExecutorSpec(
+            type="omnigent", config={"harness": "claude-native", "claude_command_hooks": authored}
+        ),
     )
 
     await _auto_create_claude_terminal(
@@ -2467,9 +2482,15 @@ async def test_auto_create_claude_terminal_passes_startup_instructions(
         lambda _sid, _evt: None,
         server_client=fake_client,
         agent_spec=agent_spec,
+        skills_filter=skills_filter,
     )
 
     args = captured["spec"].args
+    settings = json.loads(Path(args[args.index("--settings") + 1]).read_text())
+    assert settings["hooks"]["PostToolUse"][-1] == authored["PostToolUse"][0]
+    assert "SessionStart" in settings["hooks"]
+    assert "PermissionRequest" in settings["hooks"]
+    assert args.count("--settings") == 1
     assert "--append-system-prompt" in args, f"missing --append-system-prompt in {args!r}"
     idx = args.index("--append-system-prompt")
     assert args[idx + 1] == (

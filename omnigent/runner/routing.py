@@ -325,19 +325,12 @@ class RunnerRouter:
 
     def require_mcp_registry_support(self, conversation: Conversation) -> None:
         """Validate the connected runner before sending it a registry-backed agent."""
-        from omnigent.host.frames import CAP_MCP_REGISTRY
-
         connection = self._registry.get(conversation.runner_id) if conversation.runner_id else None
-        if (
-            connection is None
-            or CAP_MCP_REGISTRY in connection.hello.capabilities
-            or self._agent_store is None
-            or self._agent_cache is None
-        ):
+        if connection is None or self._agent_store is None or self._agent_cache is None:
             return
-        from omnigent.server.mcp_compatibility import require_session_registry_mcp_support
+        from omnigent.server.mcp_compatibility import require_session_runtime_support
 
-        require_session_registry_mcp_support(
+        require_session_runtime_support(
             conversation,
             connection.hello.capabilities,
             component="runner",

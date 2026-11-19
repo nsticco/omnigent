@@ -3118,6 +3118,7 @@ def augment_claude_args(
     subagent_router_dir: Path | None = None,
     turn_routing: bool = False,
     active_harnesses: Collection[str] | None = None,
+    authored_hooks: object = None,
 ) -> list[str]:
     """
     Return Claude CLI args with Omnigent MCP/hook/skill injection.
@@ -3187,6 +3188,9 @@ def augment_claude_args(
         subagent_router_dir=subagent_router_dir,
         turn_routing=turn_routing,
     )
+    from omnigent.harnesses.claude_native.authored_hooks import append_authored_hooks
+
+    append_authored_hooks(hook_settings, authored_hooks)
     from omnigent.mcp_disabled_servers import apply_claude_settings
 
     hook_settings = apply_claude_settings(

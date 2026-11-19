@@ -185,6 +185,18 @@ def validate_omnigent_executor(
             " — harness manages context internally",
         )
     harness = spec.executor.config.get("harness")
+    if "claude_command_hooks" in spec.executor.config:
+        from omnigent.harnesses.claude_native.authored_hooks import parse_authored_hooks
+
+        try:
+            parse_authored_hooks(spec.executor.config["claude_command_hooks"])
+        except ValueError as exc:
+            result.add("executor.config.claude_command_hooks", str(exc))
+        if harness != "claude-native":
+            result.add(
+                "executor.config.claude_command_hooks",
+                "only supported with harness 'claude-native'",
+            )
     if "context_files" in spec.executor.config:
         if not isinstance(spec.executor.config["context_files"], bool):
             result.add("executor.config.context_files", "must be a boolean")

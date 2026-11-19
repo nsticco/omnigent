@@ -160,6 +160,7 @@ def agent_spec_to_agent_def(spec: AgentSpec) -> AgentDef:
         profile=spec.executor.config.get("profile"),
         context_files=spec.executor.config.get("context_files"),
         system_prompt_mode=spec.executor.config.get("system_prompt_mode"),
+        claude_command_hooks=spec.executor.config.get("claude_command_hooks"),
     )
 
     # ``AgentDef.name`` / ``AgentDef.prompt`` are ``str | None`` — pass
@@ -457,6 +458,7 @@ def _sub_spec_to_agent_tool(sub: AgentSpec) -> AgentTool:
             profile=profile,
             context_files=sub.executor.config.get("context_files"),
             system_prompt_mode=sub.executor.config.get("system_prompt_mode"),
+            claude_command_hooks=sub.executor.config.get("claude_command_hooks"),
         ),
     )
 
@@ -1764,6 +1766,8 @@ def _translate_executor_from_def(
         "harness": harness,
         "profile": profile,
     }
+    if oa_executor is not None and oa_executor.claude_command_hooks is not None:
+        config["claude_command_hooks"] = oa_executor.claude_command_hooks
     if oa_executor is not None and oa_executor.context_files is not None:
         config["context_files"] = oa_executor.context_files
     if oa_executor is not None and oa_executor.system_prompt_mode is not None:

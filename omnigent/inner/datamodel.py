@@ -363,6 +363,7 @@ class ExecutorSpec:
     auth: object | None = None  # ApiKeyAuth | DatabricksAuth | None
     context_files: bool | None = None
     system_prompt_mode: str | None = None
+    claude_command_hooks: dict[str, object] | None = None
 
 
 # ---------------------------------------------------------------------------

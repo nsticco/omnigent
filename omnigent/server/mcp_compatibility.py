@@ -42,7 +42,7 @@ def require_registry_mcp_support(
         )
 
 
-def require_session_registry_mcp_support(
+def require_session_runtime_support(
     conversation: Conversation,
     capabilities: Collection[str],
     *,
@@ -51,7 +51,7 @@ def require_session_registry_mcp_support(
     agent_cache: AgentCache,
 ) -> None:
     """Check a saved bundle before launching or initializing its runtime."""
-    if CAP_MCP_REGISTRY in capabilities or conversation.agent_id is None:
+    if conversation.agent_id is None:
         return
     agent = agent_store.get(conversation.agent_id)
     if agent is None:
@@ -59,6 +59,15 @@ def require_session_registry_mcp_support(
     spec = agent_cache.load(
         agent.id, agent.bundle_location, expand_env=agent.operator_authored
     ).spec
+    from omnigent.server.claude_hook_compatibility import require_hook_support
+
+    require_hook_support(
+        spec,
+        capabilities,
+        component=component,
+        operator_authored=agent.operator_authored,
+        harness=conversation.harness_override,
+    )
     from omnigent.mcp_selection import selected_mcp_spec
 
     require_registry_mcp_support(

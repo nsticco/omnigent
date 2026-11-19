@@ -136,6 +136,28 @@ executor:
     api_key: ${GEMINI_API_KEY}     # or ANTIGRAVITY_API_KEY
 ```
 
+### Operator-authored Claude command hooks
+
+For `harness: claude-native`, `executor.claude_command_hooks` (or
+`executor.config.claude_command_hooks` in directory bundles) accepts synchronous
+`PostToolUse` command hooks with the exact `Bash` matcher. Each command may set a
+positive `timeout` of at most 600 seconds; omission uses Claude's default. Other
+events, matchers, async hooks, prompt hooks, and agent hooks are rejected.
+
+These commands run with the session terminal's existing execution and network
+authority, not through tool approval. Only operator-authored bundles can supply
+them. Uploaded user bundles are rejected. The server and execution host/runner
+must advertise `claude_command_hooks`; unsupported runtimes are rejected before
+launch or initialization. Client integrations must check the server feature
+before selecting this transport.
+
+The bridge appends authored hooks to its invocation settings without replacing
+its lifecycle or permission hooks, including when `skills_filter` is `none`.
+Integrations projecting hooks from a separate settings file must remove those
+projected hooks from that file so ambient settings discovery cannot execute them
+a second time. Claude owns command execution, timeout, and cancellation; Omnigent
+does not add a second hook executor.
+
 ### Pi context files
 
 With `harness: pi` or `pi-native`, Pi automatically appends context files such
