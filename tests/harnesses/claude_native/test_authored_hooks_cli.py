@@ -11,11 +11,15 @@ import pytest
 
 
 @pytest.mark.parametrize("mode", ["native", "all", "none"])
-@pytest.mark.parametrize("timeout", [False, True])
-def test_installed_claude_authored_hooks(tmp_path: Path, mode: str, timeout: bool) -> None:
+@pytest.mark.parametrize("execution", ["normal", "timeout", "cancel"])
+def test_installed_claude_authored_hooks(tmp_path: Path, mode: str, execution: str) -> None:
     cli = shutil.which("claude")
     if cli is None:
         pytest.skip("installed Claude CLI required")
+    if execution == "cancel" and sys.platform != "linux":
+        pytest.skip("managed-terminal descendant checks use Linux process state")
+    if execution == "cancel" and shutil.which("tmux") is None:
+        pytest.skip("installed tmux required for managed-terminal cancellation")
     root = Path(__file__).resolve().parents[3]
     result = subprocess.run(
         [
@@ -30,7 +34,8 @@ def test_installed_claude_authored_hooks(tmp_path: Path, mode: str, timeout: boo
                     ["--permission-mode", "bypassPermissions"],
                     {"PROJECT_SIBLING": "process-sibling"},
                     {"env": {"PROJECT_LABEL": "settings-value", "PROJECT_ONLY": "settings-only"}},
-                    timeout,
+                    execution == "timeout",
+                    execution == "cancel",
                 ]
             ),
         ],

@@ -1,5 +1,6 @@
 """Isolated installed-CLI probe; only connects to its local mock provider."""
 
+import asyncio
 import json
 import os
 import pathlib
@@ -14,7 +15,10 @@ import httpx
 
 
 def main() -> None:
-    root, cli, temporary, mode, base, projected, selected, timeout = json.loads(sys.argv[1])
+    root, cli, temporary, mode, base, projected, selected, timeout, *extra = json.loads(
+        sys.argv[1]
+    )
+    cancel = bool(extra and extra[0])
     p = pathlib.Path(temporary)
     p.mkdir(parents=True)
     os.environ["HOME"] = str(p / "runner")
@@ -39,6 +43,15 @@ def main() -> None:
     }
     if timeout:
         command["timeout"] = 0.1
+    if cancel:
+        command["command"] = (
+            "printf '%s' $$ > "
+            + str(workspace / "hook-pid")
+            + "; sleep 3 & printf '%s' $! > "
+            + str(workspace / "child-pid")
+            + "; wait; printf FINISHED > "
+            + str(workspace / "hook-marker")
+        )
     selected["hooks"] = {"PostToolUse": [{"matcher": "Bash", "hooks": [command]}]}
     authored = selected["hooks"]
     if mode != "native":
@@ -83,7 +96,9 @@ def main() -> None:
                 authored_hooks=authored,
             )
             generated = json.loads(pathlib.Path(args[args.index("--settings") + 1]).read_text())
-            assert generated.get("hooks")
+            assert "SessionStart" in generated["hooks"]
+            assert "Stop" in generated["hooks"]
+            assert args.count("--settings") == 1
         body = {
             "command": (
                 'printf "label=%s only=%s sibling=%s" '
@@ -114,21 +129,77 @@ def main() -> None:
             "NO_PROXY": "127.0.0.1,localhost",
             "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
         }
+        if cancel:
+            env["PATH"] = str(pathlib.Path(shutil.which("tmux")).parent) + os.pathsep + os.defpath
         env.update(
             {"PROJECT_LABEL": "process-value", "PROJECT_SIBLING": "process-sibling"}
             if mode == "native"
             else projected
         )
+        command_args = [
+            cli,
+            "-p",
+            "Complete the local test",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            *args,
+        ]
+        if cancel:
+            from omnigent.inner.terminal import TerminalInstance
+
+            async def cancel_running_hook():
+                private = p / "terminal"
+                private.mkdir(mode=0o700)
+                terminal = TerminalInstance(
+                    name="claude",
+                    session_key="main",
+                    socket_path=private / "tmux.sock",
+                    private_dir=private,
+                    command=cli,
+                    args=command_args[1:],
+                    env=env,
+                    inherit_env=False,
+                )
+                try:
+                    await terminal.launch(cwd=workspace)
+                    for _ in range(300):
+                        if (workspace / "child-pid").exists():
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        raise AssertionError("hook did not start in managed terminal")
+                    hook_pid = int((workspace / "hook-pid").read_text())
+                    child_pid = int((workspace / "child-pid").read_text())
+
+                    def alive(pid):
+                        try:
+                            state = pathlib.Path(f"/proc/{pid}/stat").read_text()
+                        except FileNotFoundError:
+                            return False
+                        return state.split(")", 1)[1].strip()[0] != "Z"
+
+                    assert alive(hook_pid) and alive(child_pid)
+                    await terminal.close()
+                    for _ in range(20):
+                        if not alive(hook_pid) and not alive(child_pid):
+                            break
+                        await asyncio.sleep(0.1)
+                    assert not alive(hook_pid), "hook shell survived managed terminal close"
+                    assert not alive(child_pid), "hook child survived managed terminal close"
+                    await asyncio.sleep(3.2)
+                    assert not (workspace / "hook-marker").exists(), (
+                        "cancelled hook wrote delayed side effect"
+                    )
+                    assert not terminal.running and not private.exists()
+                finally:
+                    await terminal.close()
+
+            asyncio.run(cancel_running_hook())
+            print(json.dumps({"mode": mode, "managedTerminalCancellationVerified": True}))
+            return
         run = subprocess.run(
-            [
-                cli,
-                "-p",
-                "Complete the local test",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                *args,
-            ],
+            command_args,
             cwd=workspace,
             env=env,
             text=True,
